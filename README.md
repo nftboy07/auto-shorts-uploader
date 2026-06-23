@@ -18,7 +18,7 @@ project/
 │   ├── secrets.py              # Secret manager
 │   ├── client_secrets.json     # YouTube OAuth secrets (User supplied)
 │   └── youtube_credentials.json# Refreshed YouTube OAuth tokens (Auto generated)
-├── telegram/
+├── telegram_bot/
 │   ├── controller.py           # Telegram bot initiator
 │   └── commands.py             # Command handlers
 ├── instagram/

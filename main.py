@@ -12,7 +12,7 @@ from config.secrets import validate_secrets
 from database import log_action
 from services import start_watchdog
 from scheduler import start_scheduler
-from telegram import run_bot_async
+from telegram_bot import run_bot_async
 
 async def main():
     """Main execution thread for the bot."""

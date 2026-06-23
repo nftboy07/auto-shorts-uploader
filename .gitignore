@@ -15,6 +15,7 @@ uploads/
 
 # Databases and user sessions
 database/*.db
+config/client_secrets.json
 config/youtube_credentials.json
 config/session_*
 config/instaloader_session_*
