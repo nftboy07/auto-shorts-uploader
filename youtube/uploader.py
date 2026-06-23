@@ -132,6 +132,27 @@ def upload_short(video_id: str, local_path: str, creator: str, original_caption:
         youtube_id = response.get("id")
         if youtube_id:
             upload_logger.info(f"Upload complete! YouTube Video ID: {youtube_id}")
+            
+            # Extract and upload custom thumbnail from video frame
+            thumbnail_path = local_path.rsplit(".", 1)[0] + ".jpg"
+            try:
+                from utils import extract_thumbnail
+                if extract_thumbnail(local_path, thumbnail_path):
+                    thumb_request = youtube.thumbnails().set(
+                        videoId=youtube_id,
+                        media_body=MediaFileUpload(thumbnail_path, mimetype="image/jpeg")
+                    )
+                    thumb_request.execute()
+                    upload_logger.info(f"Custom thumbnail uploaded successfully for {youtube_id}")
+            except Exception as e:
+                error_logger.error(f"Failed to upload custom thumbnail for {youtube_id}: {e}")
+            finally:
+                if os.path.exists(thumbnail_path):
+                    try:
+                        os.remove(thumbnail_path)
+                    except Exception:
+                        pass
+
             add_upload(youtube_id=youtube_id, video_id=video_id, status="uploaded")
             return youtube_id
         else:

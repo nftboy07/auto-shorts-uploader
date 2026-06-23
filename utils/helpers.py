@@ -104,3 +104,33 @@ def clean_old_files(directory: str, max_age_days: int = 7) -> None:
                     app_logger.info(f"Cleaned up old file: {f}")
                 except Exception as e:
                     error_logger.error(f"Failed to delete {f}: {e}")
+
+def extract_thumbnail(video_path: str, output_image_path: str, timestamp_sec: float = 2.0) -> bool:
+    """
+    Extracts a single high-quality frame from a video at a specific timestamp using FFmpeg
+    to serve as a custom YouTube thumbnail.
+    """
+    if not os.path.exists(video_path):
+        error_logger.error(f"Video file does not exist: {video_path}")
+        return False
+        
+    cmd = [
+        "ffmpeg",
+        "-y",
+        "-ss", str(timestamp_sec),
+        "-i", video_path,
+        "-vframes", "1",
+        "-q:v", "2",
+        output_image_path
+    ]
+    
+    try:
+        subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=True)
+        app_logger.info(f"Successfully extracted thumbnail from {video_path} to {output_image_path}")
+        return True
+    except subprocess.CalledProcessError as e:
+        error_logger.error(f"FFmpeg thumbnail extraction failed for {video_path}: {e.stderr.decode() if e.stderr else e}")
+        return False
+    except Exception as e:
+        error_logger.error(f"Error during FFmpeg thumbnail extraction: {e}")
+        return False

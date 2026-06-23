@@ -1,7 +1,7 @@
 # Instagram Watcher Settings
 instagram:
   accounts: []
-  check_interval_seconds: 1800
+  check_interval_seconds: 900
   download_dir: "downloads"
   min_duration: 20
   max_duration: 60

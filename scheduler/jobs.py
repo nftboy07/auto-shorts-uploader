@@ -45,7 +45,7 @@ async def scan_instagram_job():
     watcher = InstagramWatcher()
     
     # Run the watcher check in a separate thread to prevent blocking the async loop
-    downloaded = await asyncio.to_thread(watcher.check_new_reels, 5, proxy)
+    downloaded = await asyncio.to_thread(watcher.check_new_reels, 15, proxy)
     app_logger.info(f"Instagram scan completed. Downloaded {len(downloaded)} new Reels.")
 
 async def perform_scheduled_upload(video_id: str, local_path: str, creator: str, caption: str):
@@ -65,47 +65,31 @@ async def perform_scheduled_upload(video_id: str, local_path: str, creator: str,
     else:
         app_logger.error(f"Failed scheduled upload for video {video_id}")
 
-def generate_random_slots(count: int) -> List[datetime]:
-    """Generates 'count' random datetimes spread across the next 24 hours, avoiding bursts."""
+def generate_hourly_slots() -> List[datetime]:
+    """Generates exactly 24 datetimes, spaced exactly 1 hour apart, starting from the next top of the hour."""
     now = datetime.now()
-    slots = []
-    
-    # Distribute times slots by dividing the 24 hour block into equal windows, then adding jitter
-    window_hours = 24.0 / count
-    
-    for i in range(count):
-        window_start = now + timedelta(hours=i * window_hours)
-        # Add random jitter within the window (keep at least 15 mins padding from window bounds)
-        jitter_minutes = random.uniform(15, (window_hours * 60) - 15)
-        slot_time = window_start + timedelta(minutes=jitter_minutes)
-        slots.append(slot_time)
-        
-    return slots
+    start_time = (now + timedelta(hours=1)).replace(minute=0, second=0, microsecond=0)
+    return [start_time + timedelta(hours=i) for i in range(24)]
 
 async def plan_daily_uploads_job():
     """
-    Job that runs daily at midnight to calculate the randomized upload schedule for the day.
-    Schedules one-off upload tasks.
+    Job that runs daily at midnight to calculate the fixed hourly upload schedule for the day.
+    Schedules exactly 24 uploads (one per hour).
     """
     settings = load_settings()
     if settings.get("scheduler", {}).get("paused", False):
         app_logger.info("Scheduler is paused. Skipping daily upload planning.")
         return
         
-    yt_settings = settings.get("youtube", {})
-    min_uploads = yt_settings.get("min_uploads_per_day", 8)
-    max_uploads = yt_settings.get("max_uploads_per_day", 20)
-    
-    upload_count = random.randint(min_uploads, max_uploads)
-    app_logger.info(f"Planning {upload_count} randomized uploads for the next 24 hours...")
+    app_logger.info("Planning 24 hourly uploads for the next 24 hours...")
     
     queue = get_upload_queue()
     if not queue:
         app_logger.warning("Upload queue is empty. Cannot schedule any uploads today.")
         return
         
-    # Generate schedule times slots
-    slot_times = generate_random_slots(upload_count)
+    # Generate schedule times slots (24 hours, 1 hour apart)
+    slot_times = generate_hourly_slots()
     
     # Match schedule slots with items in queue
     scheduled_count = 0
@@ -128,10 +112,10 @@ async def plan_daily_uploads_job():
             args=[video_id, local_path, creator, caption]
         )
         
-        log_action("schedule_upload", f"Scheduled video {video_id} for upload at {slot_time.strftime('%H:%M:%S')}")
+        log_action("schedule_upload", f"Scheduled video {video_id} for upload at {slot_time.strftime('%Y-%m-%d %H:%M:%S')}")
         scheduled_count += 1
         
-    app_logger.info(f"Scheduled {scheduled_count} uploads out of {upload_count} target slots.")
+    app_logger.info(f"Scheduled {scheduled_count} hourly uploads out of 24 target slots.")
 
 def start_scheduler():
     """Initializes and starts the APScheduler scheduler."""
