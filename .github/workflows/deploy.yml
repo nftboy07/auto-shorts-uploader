@@ -34,7 +34,11 @@ jobs:
             git fetch --all
             git reset --hard origin/main
             
-            # Pull environment variables if necessary (usually they reside locally on VPS in .env)
+            # Write environment variables from GitHub Secrets to VPS .env
+            echo "TELEGRAM_BOT_TOKEN=${{ secrets.TELEGRAM_BOT_TOKEN }}" > .env
+            echo "INSTAGRAM_USERNAME=${{ secrets.INSTAGRAM_USERNAME }}" >> .env
+            echo "INSTAGRAM_PASSWORD=${{ secrets.INSTAGRAM_PASSWORD }}" >> .env
+            echo "GEMINI_API_KEY=${{ secrets.GEMINI_API_KEY }}" >> .env
             # Rebuild and restart the container
             docker compose down
             docker compose up --build -d
