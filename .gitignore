@@ -1,0 +1,26 @@
+# Python files
+__pycache__/
+*.py[cod]
+*$py.class
+venv/
+.venv/
+
+# Environment configurations
+.env
+
+# Local logs and media downloads
+logs/
+downloads/
+uploads/
+
+# Databases and user sessions
+database/*.db
+config/youtube_credentials.json
+config/session_*
+config/instaloader_session_*
+
+# IDEs and system files
+.idea/
+.vscode/
+.DS_Store
+Thumbs.db

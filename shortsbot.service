@@ -1,0 +1,17 @@
+[Unit]
+Description=Automated Instagram to YouTube Shorts Agent
+After=network.target
+
+[Service]
+Type=simple
+User=root
+WorkingDirectory=/opt/instagram-youtube-shorts-agent
+ExecStart=/opt/instagram-youtube-shorts-agent/venv/bin/python main.py
+Restart=always
+RestartSec=5
+EnvironmentFile=/opt/instagram-youtube-shorts-agent/.env
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target

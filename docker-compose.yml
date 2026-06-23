@@ -1,0 +1,25 @@
+version: '3.8'
+
+services:
+  shortsbot:
+    build: .
+    container_name: shortsbot-agent
+    restart: always
+    env_file:
+      - .env
+    volumes:
+      # Persist SQLite database
+      - ./database:/app/database
+      # Persist logs
+      - ./logs:/app/logs
+      # Mount directory for downloads to review locally
+      - ./downloads:/app/downloads
+      # Mount directory for uploads
+      - ./uploads:/app/uploads
+      # Persist settings configuration, OAuth files, and Instagram sessions
+      - ./config:/app/config
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
