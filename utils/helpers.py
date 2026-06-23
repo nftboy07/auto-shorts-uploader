@@ -134,3 +134,52 @@ def extract_thumbnail(video_path: str, output_image_path: str, timestamp_sec: fl
     except Exception as e:
         error_logger.error(f"Error during FFmpeg thumbnail extraction: {e}")
         return False
+
+def trim_video(video_path: str, output_path: str, max_duration_sec: float = 60.0) -> bool:
+    """
+    Trims a video to max_duration_sec using FFmpeg.
+    If the video is already within the limit, it copies the file to output_path.
+    """
+    if not os.path.exists(video_path):
+        error_logger.error(f"Video file does not exist: {video_path}")
+        return False
+        
+    metadata = get_video_metadata(video_path)
+    if not metadata:
+        return False
+        
+    duration = metadata["duration"]
+    if duration <= max_duration_sec:
+        import shutil
+        try:
+            shutil.copy2(video_path, output_path)
+            app_logger.info(f"Video {video_path} is within limit ({duration:.1f}s). Copied directly.")
+            return True
+        except Exception as e:
+            error_logger.error(f"Failed to copy video file: {e}")
+            return False
+            
+    # Trim video using FFmpeg and re-encode to guarantee clean metadata and playback sync
+    cmd = [
+        "ffmpeg",
+        "-y",
+        "-i", video_path,
+        "-t", str(max_duration_sec),
+        "-c:v", "libx264",
+        "-preset", "superfast",
+        "-crf", "22",
+        "-c:a", "aac",
+        output_path
+    ]
+    
+    try:
+        app_logger.info(f"Trimming video {video_path} to {max_duration_sec}s...")
+        subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=True)
+        app_logger.info(f"Successfully trimmed video to {output_path}")
+        return True
+    except subprocess.CalledProcessError as e:
+        error_logger.error(f"FFmpeg trim failed for {video_path}: {e.stderr.decode() if e.stderr else e}")
+        return False
+    except Exception as e:
+        error_logger.error(f"Error during FFmpeg trim: {e}")
+        return False

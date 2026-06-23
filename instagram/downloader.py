@@ -3,7 +3,7 @@ import yt_dlp
 from pathlib import Path
 from typing import Optional, Dict, Any
 
-from utils import app_logger, error_logger, calculate_file_hash, get_video_metadata
+from utils import app_logger, error_logger, calculate_file_hash, get_video_metadata, trim_video
 from database import add_video, video_exists, file_hash_exists
 from config import load_settings
 
@@ -70,39 +70,29 @@ def download_reel(shortcode: str, proxy: Optional[str] = None) -> Optional[str]:
                 os.remove(local_path)
                 return None
                 
-            # Load threshold rules
-            settings = load_settings()
-            ig_rules = settings.get("instagram", {})
-            min_dur = ig_rules.get("min_duration", 20)
-            max_dur = ig_rules.get("max_duration", 60)
-            min_h = ig_rules.get("min_height", 720)
-            
             duration = metadata["duration"]
-            width = metadata["width"]
-            height = metadata["height"]
-            aspect_ratio = metadata["aspect_ratio"]
             
-            # 2. Apply Filters
-            # Reject if duration is too short/long
-            if not (min_dur <= duration <= max_dur):
-                app_logger.warning(f"Reel {shortcode} rejected: Duration {duration:.1f}s not in range [{min_dur}, {max_dur}].")
-                os.remove(local_path)
-                return None
+            # 2. Trim video if it exceeds 60 seconds (YouTube Shorts limit)
+            if duration > 60.0:
+                app_logger.info(f"Video {shortcode} duration {duration:.1f}s exceeds 60s. Trimming to 60s...")
+                temp_trimmed_path = str(DOWNLOADS_DIR / f"{shortcode}_trimmed.mp4")
+                if trim_video(local_path, temp_trimmed_path, 60.0):
+                    # Replace original file with the trimmed file
+                    os.remove(local_path)
+                    os.rename(temp_trimmed_path, local_path)
+                    
+                    # Re-inspect metadata of the trimmed video
+                    metadata = get_video_metadata(local_path)
+                    if not metadata:
+                        app_logger.warning(f"Failed to retrieve metadata for trimmed video {shortcode}. Rejecting.")
+                        return None
+                    duration = metadata["duration"]
+                else:
+                    app_logger.warning(f"Failed to trim video {shortcode}. Rejecting.")
+                    os.remove(local_path)
+                    return None
                 
-            # Reject if aspect ratio is not vertical (roughly 9:16). Vertical means width < height.
-            # Aspect ratio 9/16 = 0.5625. We allow some buffer, but width must be less than height.
-            if width >= height:
-                app_logger.warning(f"Reel {shortcode} rejected: Not vertical (Dimensions: {width}x{height}, Aspect: {aspect_ratio:.2f}).")
-                os.remove(local_path)
-                return None
-                
-            # Reject if resolution is not HD (height < 720)
-            if height < min_h:
-                app_logger.warning(f"Reel {shortcode} rejected: Quality below HD ({height}p < {min_h}p).")
-                os.remove(local_path)
-                return None
-                
-            # 3. Compute hash and check for duplicates
+            # 3. Compute hash and check for duplicates to prevent double-uploading
             file_hash = calculate_file_hash(local_path)
             if file_hash_exists(file_hash):
                 app_logger.warning(f"Reel {shortcode} rejected: File hash {file_hash} already exists in database (duplicate content).")
