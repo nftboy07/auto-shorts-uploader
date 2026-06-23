@@ -238,7 +238,7 @@ async def download_and_upload_recent_reels(username: str, limit: int = 5, update
 
 @admin_only
 async def add_account_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """Adds a new Instagram account to watch and downloads/uploads last 5 videos."""
+    """Adds a new Instagram account to watch and downloads/uploads last 24 videos."""
     if not context.args:
         await update.message.reply_text("Usage: `/add_account <instagram_username>`")
         return
@@ -246,8 +246,8 @@ async def add_account_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
     username = context.args[0].strip().lower()
     if db.add_account(username):
         await update.message.reply_text(f"✅ Added account @{username} to watchlist.")
-        # Trigger background task for immediate 5 reels download and upload
-        asyncio.create_task(download_and_upload_recent_reels(username, limit=5, update=update))
+        # Trigger background task for immediate 24 reels download and upload
+        asyncio.create_task(download_and_upload_recent_reels(username, limit=24, update=update))
     else:
         await update.message.reply_text(f"❌ Failed to add account @{username}.")
 
