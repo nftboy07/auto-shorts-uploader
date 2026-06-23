@@ -1,4 +1,4 @@
-from telegram.ext import ApplicationBuilder, CommandHandler
+from telegram.ext import ApplicationBuilder, CommandHandler, MessageHandler, filters
 from config import secrets
 from utils import app_logger, error_logger
 from .commands import (
@@ -21,7 +21,8 @@ from .commands import (
     history_cmd,
     update_cmd,
     shell_cmd,
-    system_info_cmd
+    system_info_cmd,
+    upload_link_handler
 )
 
 # Global bot application instance
@@ -56,6 +57,11 @@ def setup_bot() -> ApplicationBuilder:
     app.add_handler(CommandHandler("history", history_cmd))
     app.add_handler(CommandHandler("update", update_cmd))
     app.add_handler(CommandHandler("restart", update_cmd))  # Alias `/restart` to `/update` restart flow
+    
+    
+    # Direct Reel link sharing handlers
+    app.add_handler(CommandHandler("upload_url", upload_link_handler))
+    app.add_handler(MessageHandler(filters.TEXT & (~filters.COMMAND), upload_link_handler))
     
     # Admin restricted commands
     app.add_handler(CommandHandler("shell", shell_cmd))

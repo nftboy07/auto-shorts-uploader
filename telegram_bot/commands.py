@@ -2,6 +2,9 @@ import os
 import subprocess
 import sys
 import psutil
+import re
+import asyncio
+import instaloader
 from pathlib import Path
 from datetime import datetime
 from typing import List
@@ -155,15 +158,73 @@ async def accounts_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
         
     await update.message.reply_text(msg, parse_mode="Markdown")
 
+async def download_and_upload_recent_reels(username: str, limit: int = 5, update: Update = None):
+    """Downloads and uploads the last 'limit' reels from a profile immediately."""
+    from instagram.downloader import download_reel
+    from youtube.uploader import upload_short
+    
+    if update:
+        await update.message.reply_text(f"⏳ Scanning @{username} for the latest {limit} Reels...")
+        
+    # We will instantiate a new Instaloader watcher
+    from instagram.watcher import InstagramWatcher
+    watcher = InstagramWatcher()
+    
+    def run_check():
+        watcher.authenticate()
+        try:
+            profile = instaloader.Profile.from_username(watcher.loader.context, username)
+            downloaded = []
+            count = 0
+            for post in profile.get_posts():
+                if count >= limit:
+                    break
+                if post.is_video:
+                    shortcode = post.shortcode
+                    if not db.video_exists(shortcode):
+                        local_path = download_reel(shortcode)
+                        if local_path:
+                            downloaded.append((shortcode, local_path, post.owner_username, post.caption or ""))
+                    count += 1
+            return downloaded
+        except Exception as e:
+            error_logger.error(f"Error checking profile @{username} on addition: {e}")
+            return []
+            
+    downloaded_items = await asyncio.to_thread(run_check)
+    
+    if not downloaded_items:
+        if update:
+            await update.message.reply_text(f"ℹ️ No new/valid Reels found on @{username} to upload.")
+        return
+        
+    if update:
+        await update.message.reply_text(f"📥 Downloaded {len(downloaded_items)} Reels. Starting uploads...")
+        
+    for shortcode, local_path, creator, caption in downloaded_items:
+        if update:
+            await update.message.reply_text(f"🚀 Uploading `{shortcode}` by @{creator} to YouTube Shorts...")
+            
+        youtube_id = await asyncio.to_thread(upload_short, shortcode, local_path, creator, caption)
+        
+        if youtube_id:
+            if update:
+                await update.message.reply_text(f"✅ Succeeded: `{shortcode}` -> https://youtu.be/{youtube_id}")
+        else:
+            if update:
+                await update.message.reply_text(f"❌ Failed to upload `{shortcode}`.")
+
 async def add_account_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """Adds a new Instagram account to watch."""
+    """Adds a new Instagram account to watch and downloads/uploads last 5 videos."""
     if not context.args:
         await update.message.reply_text("Usage: `/add_account <instagram_username>`")
         return
         
-    username = context.args[0]
+    username = context.args[0].strip().lower()
     if db.add_account(username):
         await update.message.reply_text(f"✅ Added account @{username} to watchlist.")
+        # Trigger background task for immediate 5 reels download and upload
+        asyncio.create_task(download_and_upload_recent_reels(username, limit=5, update=update))
     else:
         await update.message.reply_text(f"❌ Failed to add account @{username}.")
 
@@ -340,3 +401,55 @@ async def system_info_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
         f"🐍 **Python version:** {platform.python_version()}"
     )
     await update.message.reply_text(msg, parse_mode="Markdown")
+
+async def upload_link_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Parses a shared Instagram Reel link, downloads it, and uploads it to YouTube Shorts immediately."""
+    text = update.message.text.strip() if update.message.text else ""
+    
+    # Check for command structure or direct URL
+    match = re.search(r'instagram\.com/(?:reel|reels|p)/([A-Za-z0-9_\-]+)', text)
+    if not match and context.args:
+        text = context.args[0]
+        match = re.search(r'instagram\.com/(?:reel|reels|p)/([A-Za-z0-9_\-]+)', text)
+        
+    if not match:
+        if text.startswith('/upload_url'):
+            await update.message.reply_text("❌ Invalid link format. Usage: `/upload_url <instagram_url>`")
+        return
+        
+    # Check authorization
+    user_id = update.effective_user.id
+    settings = load_settings()
+    allowed = settings.get("telegram", {}).get("allowed_admins", [])
+    if user_id not in allowed:
+        return  # Ignore unauthorized users
+        
+    shortcode = match.group(1)
+    await update.message.reply_text(f"⚡ Instagram Reel link detected (Shortcode: `{shortcode}`). Downloading...")
+    
+    from instagram.downloader import download_reel
+    from youtube.uploader import upload_short
+    
+    # Download in thread pool
+    local_path = await asyncio.to_thread(download_reel, shortcode)
+    
+    if not local_path:
+        await update.message.reply_text("❌ Download failed. File might be a duplicate, not vertical, or outside 20-60s limit.")
+        return
+        
+    # Query database to retrieve metadata extracted by downloader
+    with db.db_session() as conn:
+        row = conn.execute("SELECT creator, caption FROM videos WHERE video_id = ?", (shortcode,)).fetchone()
+        
+    creator = row["creator"] if row else "unknown"
+    caption = row["caption"] if row else ""
+    
+    await update.message.reply_text(f"✅ Downloaded! Generating AI metadata and uploading to YouTube...")
+    
+    # Upload in thread pool
+    youtube_id = await asyncio.to_thread(upload_short, shortcode, local_path, creator, caption)
+    
+    if youtube_id:
+        await update.message.reply_text(f"🎉 Success! Uploaded to YouTube Shorts: https://youtu.be/{youtube_id}")
+    else:
+        await update.message.reply_text("❌ Upload failed. Please check `/logs` for details.")
