@@ -1,0 +1,55 @@
+{
+  "log": {
+    "loglevel": "warning"
+  },
+  "inbounds": [
+    {
+      "port": 1080,
+      "listen": "0.0.0.0",
+      "protocol": "socks",
+      "settings": {
+        "auth": "noauth",
+        "udp": true
+      }
+    },
+    {
+      "port": 1081,
+      "listen": "0.0.0.0",
+      "protocol": "http",
+      "settings": {
+        "allowRedirect": true
+      }
+    }
+  ],
+  "outbounds": [
+    {
+      "protocol": "vless",
+      "settings": {
+        "vnext": [
+          {
+            "address": "nova-orbit-cloud-4971.nova-02b8a6.workers.dev",
+            "port": 443,
+            "users": [
+              {
+                "id": "7f4f3a51-fb6e-4f3d-8f83-26afa42dbca2",
+                "encryption": "none",
+                "level": 0
+              }
+            ]
+          }
+        ]
+      },
+      "streamSettings": {
+        "network": "ws",
+        "security": "tls",
+        "tlsSettings": {
+          "serverName": "nova-orbit-cloud-4971.nova-02b8a6.workers.dev",
+          "allowInsecure": false
+        },
+        "wsSettings": {
+          "path": "/"
+        }
+      }
+    }
+  ]
+}

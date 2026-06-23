@@ -18,8 +18,20 @@ services:
       - ./uploads:/app/uploads
       # Persist settings configuration, OAuth files, and Instagram sessions
       - ./config:/app/config
+    depends_on:
+      - xray
     logging:
       driver: "json-file"
       options:
         max-size: "10m"
         max-file: "3"
+
+  xray:
+    image: teddysun/xray
+    container_name: xray-proxy
+    restart: always
+    volumes:
+      - ./config/xray_config.json:/etc/xray/config.json
+    ports:
+      - "127.0.0.1:1080:1080"
+      - "127.0.0.1:1081:1081"

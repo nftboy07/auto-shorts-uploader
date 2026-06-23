@@ -1,5 +1,6 @@
 import random
 import asyncio
+import os
 from datetime import datetime, timedelta
 from pathlib import Path
 from typing import List
@@ -9,7 +10,7 @@ from apscheduler.triggers.date import DateTrigger
 
 from utils import app_logger, error_logger
 from config import load_settings
-from database import get_upload_queue, get_active_accounts, log_action
+from database import get_upload_queue, get_active_accounts, log_action, get_active_proxies
 from instagram import InstagramWatcher
 from youtube.uploader import upload_short
 
@@ -24,10 +25,27 @@ async def scan_instagram_job():
         return
         
     app_logger.info("Executing periodic Instagram scan...")
+    
+    proxy = None
+    if settings.get("proxy", {}).get("enable_rotation", False):
+        active_proxies = get_active_proxies()
+        if active_proxies:
+            proxy = random.choice(active_proxies)
+            app_logger.info(f"Selected active proxy for scan: {proxy}")
+            # Dynamically set proxy for requests/urllib inside this scan process
+            os.environ["HTTP_PROXY"] = proxy
+            os.environ["HTTPS_PROXY"] = proxy
+        else:
+            app_logger.warning("Proxy rotation is enabled, but no active proxies found in database.")
+    else:
+        # Clear environment variables if proxy is disabled
+        os.environ.pop("HTTP_PROXY", None)
+        os.environ.pop("HTTPS_PROXY", None)
+
     watcher = InstagramWatcher()
     
     # Run the watcher check in a separate thread to prevent blocking the async loop
-    downloaded = await asyncio.to_thread(watcher.check_new_reels)
+    downloaded = await asyncio.to_thread(watcher.check_new_reels, 5, proxy)
     app_logger.info(f"Instagram scan completed. Downloaded {len(downloaded)} new Reels.")
 
 async def perform_scheduled_upload(video_id: str, local_path: str, creator: str, caption: str):

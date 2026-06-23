@@ -21,4 +21,4 @@ telegram:
 
 # Proxy Settings
 proxy:
-  enable_rotation: false
+  enable_rotation: true
