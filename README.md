@@ -116,7 +116,7 @@ To automatically deploy code modifications to your VPS upon pushing to the `main
 Start a conversation with your bot on Telegram and run `/start`. If the `allowed_admins` field in `config/settings.yaml` is empty, **your user ID will automatically register as the administrator**.
 
 ### Bot Commands
-- `/start` - Greet user & show commands
+- `/start`, `/help`, `/list` - Greet user & show commands
 - `/status` - Bot running state and queue size
 - `/health` - Diagnostics report (CPU/RAM/DB)
 - `/logs` - Fetch latest 50 lines of logs

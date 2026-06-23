@@ -39,6 +39,8 @@ def setup_bot() -> ApplicationBuilder:
     
     # Register core commands
     app.add_handler(CommandHandler("start", start_cmd))
+    app.add_handler(CommandHandler("help", start_cmd))
+    app.add_handler(CommandHandler("list", start_cmd))
     app.add_handler(CommandHandler("status", status_cmd))
     app.add_handler(CommandHandler("health", health_cmd))
     app.add_handler(CommandHandler("logs", logs_cmd))
