@@ -183,3 +183,60 @@ def trim_video(video_path: str, output_path: str, max_duration_sec: float = 60.0
     except Exception as e:
         error_logger.error(f"Error during FFmpeg trim: {e}")
         return False
+
+def manage_disk_storage(min_free_gb: float = 5.0) -> None:
+    """
+    Checks free disk space. If free space is less than min_free_gb,
+    it deletes the oldest uploaded video files from the filesystem
+    until free space is above the threshold.
+    """
+    import shutil
+    import database as db
+    
+    path_to_check = str(Path(__file__).resolve().parent.parent)
+    try:
+        usage = shutil.disk_usage(path_to_check)
+        free_gb = usage.free / (1024 ** 3)
+        app_logger.info(f"Disk storage check: {free_gb:.2f} GB free.")
+        
+        if free_gb >= min_free_gb:
+            return
+            
+        app_logger.warning(f"Free disk space ({free_gb:.2f} GB) is below threshold ({min_free_gb} GB). Cleaning up old uploaded files...")
+        
+        # Query database for uploaded videos, oldest first
+        with db.db_session() as conn:
+            uploaded_videos = conn.execute(
+                "SELECT video_id, local_path FROM videos WHERE status = 'uploaded' ORDER BY download_date ASC"
+            ).fetchall()
+            
+        deleted_count = 0
+        for row in uploaded_videos:
+            video_id = row["video_id"]
+            local_path = row["local_path"]
+            
+            if local_path and os.path.exists(local_path):
+                try:
+                    os.remove(local_path)
+                    deleted_count += 1
+                    app_logger.info(f"Deleted uploaded video file to free space: {local_path}")
+                except Exception as e:
+                    error_logger.error(f"Failed to delete {local_path}: {e}")
+                    
+            # Update database status to mark it as cleaned (and local_path to NULL)
+            with db.db_session() as conn:
+                conn.execute(
+                    "UPDATE videos SET status = 'cleaned', local_path = NULL WHERE video_id = ?",
+                    (video_id,)
+                )
+                
+            # Recheck disk space
+            usage = shutil.disk_usage(path_to_check)
+            free_gb = usage.free / (1024 ** 3)
+            if free_gb >= min_free_gb:
+                app_logger.info(f"Free disk space recovered to {free_gb:.2f} GB. Stopping cleanup.")
+                break
+                
+        app_logger.info(f"Disk storage cleanup finished. Deleted {deleted_count} video files.")
+    except Exception as e:
+        error_logger.error(f"Error during disk storage cleanup: {e}")

@@ -24,6 +24,10 @@ async def scan_instagram_job():
         app_logger.info("Scheduler is paused. Skipping Instagram scan.")
         return
         
+    # Check and manage disk space before scanning/downloading new videos
+    from utils import manage_disk_storage
+    await asyncio.to_thread(manage_disk_storage, 5.0)
+        
     app_logger.info("Executing periodic Instagram scan...")
     
     proxy = None
