@@ -44,6 +44,7 @@ def admin_only(func):
 
 # --- General Commands ---
 
+@admin_only
 async def start_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Greets the user and lists available commands."""
     msg = (
@@ -79,6 +80,7 @@ async def start_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     )
     await update.message.reply_text(msg, parse_mode="Markdown")
 
+@admin_only
 async def status_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Displays current system status, account counts, and queue statistics."""
     accounts = db.list_accounts()
@@ -96,6 +98,7 @@ async def status_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
     )
     await update.message.reply_text(status_str, parse_mode="Markdown")
 
+@admin_only
 async def health_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Performs a diagnostics health check."""
     db_ok = "OK"
@@ -118,6 +121,7 @@ async def health_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
     )
     await update.message.reply_text(msg, parse_mode="Markdown")
 
+@admin_only
 async def logs_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Returns the latest logs from app.log."""
     logs = get_latest_logs("app.log", 50)
@@ -125,6 +129,7 @@ async def logs_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         logs = logs[-4000:]
     await update.message.reply_text(f"```\n{logs}\n```", parse_mode="Markdown")
 
+@admin_only
 async def lastupload_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Displays information on the last uploaded video."""
     last = db.get_last_upload()
@@ -142,6 +147,7 @@ async def lastupload_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
     )
     await update.message.reply_text(msg, parse_mode="Markdown")
 
+@admin_only
 async def queue_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Shows all files currently queued for upload."""
     queue = db.get_upload_queue()
@@ -158,6 +164,7 @@ async def queue_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         
     await update.message.reply_text(msg, parse_mode="Markdown")
 
+@admin_only
 async def accounts_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Lists watched accounts."""
     accounts = db.list_accounts()
@@ -229,6 +236,7 @@ async def download_and_upload_recent_reels(username: str, limit: int = 5, update
             if update:
                 await update.message.reply_text(f"❌ Failed to upload `{shortcode}`.")
 
+@admin_only
 async def add_account_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Adds a new Instagram account to watch and downloads/uploads last 5 videos."""
     if not context.args:
@@ -243,6 +251,7 @@ async def add_account_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
     else:
         await update.message.reply_text(f"❌ Failed to add account @{username}.")
 
+@admin_only
 async def remove_account_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Removes an Instagram account from watchlist."""
     if not context.args:
@@ -255,6 +264,7 @@ async def remove_account_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE)
     else:
         await update.message.reply_text(f"❌ Failed to remove account @{username}.")
 
+@admin_only
 async def upload_now_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Triggers an immediate upload of the first video in the queue."""
     queue = db.get_upload_queue()
@@ -281,6 +291,7 @@ async def upload_now_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
     else:
         await update.message.reply_text(f"❌ Upload failed. Check `/logs` for details.")
 
+@admin_only
 async def pause_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Pauses the scheduler."""
     settings = load_settings()
@@ -290,6 +301,7 @@ async def pause_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     save_settings(settings)
     await update.message.reply_text("⏸ Scheduler paused. Automated checks and uploads are suspended.")
 
+@admin_only
 async def resume_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Resumes the scheduler."""
     settings = load_settings()
@@ -299,6 +311,7 @@ async def resume_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
     save_settings(settings)
     await update.message.reply_text("▶ Scheduler resumed. Automated processes are active.")
 
+@admin_only
 async def proxies_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Lists proxies."""
     proxies = db.get_all_proxies()
@@ -312,6 +325,7 @@ async def proxies_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
         msg += f"• `{p['proxy_url']}` | {status} | Failures: {p['failure_count']}\n"
     await update.message.reply_text(msg, parse_mode="Markdown")
 
+@admin_only
 async def add_proxy_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Adds a proxy URL."""
     if not context.args:
@@ -323,6 +337,7 @@ async def add_proxy_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
     else:
         await update.message.reply_text("❌ Failed to add proxy.")
 
+@admin_only
 async def remove_proxy_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Removes a proxy URL."""
     if not context.args:
@@ -334,6 +349,7 @@ async def remove_proxy_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -
     else:
         await update.message.reply_text("❌ Failed to remove proxy.")
 
+@admin_only
 async def stats_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Aggregates analytics report."""
     analytics = db.get_analytics_summary()
@@ -350,6 +366,7 @@ async def stats_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         )
     await update.message.reply_text(msg, parse_mode="Markdown")
 
+@admin_only
 async def history_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Displays last 15 items in action history."""
     hist = db.get_system_history(15)
@@ -361,6 +378,7 @@ async def history_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
         msg += f"[{item['timestamp'][:16]}] **{item['action'].upper()}**: {item['details']}\n"
     await update.message.reply_text(msg, parse_mode="Markdown")
 
+@admin_only
 async def update_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Pulls code changes from Git and restarts the bot process."""
     await update.message.reply_text("🔄 Initiating update. Pulling codebase from git...")
@@ -417,6 +435,7 @@ async def system_info_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
     )
     await update.message.reply_text(msg, parse_mode="Markdown")
 
+@admin_only
 async def upload_link_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Parses a shared Instagram Reel link, downloads it, and uploads it to YouTube Shorts immediately."""
     text = update.message.text.strip() if update.message.text else ""
@@ -431,13 +450,6 @@ async def upload_link_handler(update: Update, context: ContextTypes.DEFAULT_TYPE
         if text.startswith('/upload_url'):
             await update.message.reply_text("❌ Invalid link format. Usage: `/upload_url <instagram_url>`")
         return
-        
-    # Check authorization
-    user_id = update.effective_user.id
-    settings = load_settings()
-    allowed = settings.get("telegram", {}).get("allowed_admins", [])
-    if user_id not in allowed:
-        return  # Ignore unauthorized users
         
     shortcode = match.group(1)
     await update.message.reply_text(f"⚡ Instagram Reel link detected (Shortcode: `{shortcode}`). Downloading...")
