@@ -39,8 +39,7 @@ jobs:
             echo "INSTAGRAM_USERNAME=${{ secrets.INSTAGRAM_USERNAME }}" >> .env
             echo "INSTAGRAM_PASSWORD=${{ secrets.INSTAGRAM_PASSWORD }}" >> .env
             echo "GEMINI_API_KEY=${{ secrets.GEMINI_API_KEY }}" >> .env
-            # Rebuild and restart the container
-            docker compose down
+            # Rebuild and restart the container with near zero-downtime (without taking it down first)
             docker compose up --build -d
             
             echo "🚀 Deployment completed successfully!"
