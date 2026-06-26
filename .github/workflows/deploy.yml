@@ -50,10 +50,17 @@ jobs:
               echo "WARNING: YOUTUBE_CREDENTIALS_JSON secret not set - YouTube uploads will fail until this is configured"
             fi
 
-            # Write Instagram cookies if provided
+            # Write Instagram cookies using Python to preserve tab characters correctly
             if [ -n "${{ secrets.INSTAGRAM_COOKIES }}" ]; then
-              echo '${{ secrets.INSTAGRAM_COOKIES }}' > config/instagram_cookies.txt
-              echo "Instagram cookies written to config/instagram_cookies.txt"
+              python3 -c "
+import sys
+content = sys.stdin.read()
+with open('config/instagram_cookies.txt', 'w') as f:
+    f.write(content)
+print('Instagram cookies written: ' + str(len(content)) + ' bytes')
+" << 'COOKIEEOF'
+${{ secrets.INSTAGRAM_COOKIES }}
+COOKIEEOF
             fi
 
             # Rebuild and restart the container with near zero-downtime

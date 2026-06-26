@@ -181,30 +181,48 @@ async def accounts_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
     await update.message.reply_text(msg, parse_mode="HTML")
 
 async def download_recent_reels_to_queue(username: str, limit: int = 24, update: Update = None):
-    """Downloads the last 'limit' reels from a profile immediately and stores them in the queue.
-    
+    """Downloads the last 'limit' reels from a profile and stores them in the queue.
+
     Uses yt-dlp (via instagram.watcher.download_profile_reels) instead of instaloader
     to avoid Instagram's 400 Bad Request GraphQL block on get_posts().
     """
     from instagram.watcher import download_profile_reels
 
     if update:
-        await update.message.reply_text(f"⏳ Scanning @{username} for the latest {limit} Reels...")
+        await update.message.reply_text(f"\u23f3 Scanning @{username} for the latest {limit} Reels...")
+
+    app_logger.info(f"download_recent_reels_to_queue called for @{username} limit={limit}")
 
     # Run the blocking yt-dlp download in a thread pool so it doesn't freeze the bot
-    downloaded_paths = await asyncio.to_thread(download_profile_reels, username, limit)
+    try:
+        downloaded_paths = await asyncio.to_thread(download_profile_reels, username, limit)
+    except Exception as e:
+        error_logger.error(f"download_profile_reels raised exception for @{username}: {e}")
+        if update:
+            await update.message.reply_text(
+                f"\u274c Download crashed for @{username}: <code>{str(e)[:200]}</code>\n"
+                f"Check /logs for details.",
+                parse_mode="HTML",
+            )
+        return
 
     if not downloaded_paths:
         if update:
             await update.message.reply_text(
-                f"ℹ️ No new/valid Reels found on @{username} to add to queue.\n"
-                f"The account might be private, have no reels, or all reels already downloaded."
+                f"\u2139\ufe0f No new Reels downloaded for @{username}.\n"
+                f"Possible reasons:\n"
+                f"\u2022 Account is private\n"
+                f"\u2022 yt-dlp blocked by Instagram\n"
+                f"\u2022 Cookies expired or invalid\n"
+                f"\u2022 All reels already in queue\n\n"
+                f"Check <b>/logs</b> for the exact yt-dlp error.",
+                parse_mode="HTML",
             )
         return
 
     if update:
         await update.message.reply_text(
-            f"📥 Successfully downloaded <b>{len(downloaded_paths)} Reels</b> from @{username} and added to queue.\n"
+            f"\ud83d\udce5 Successfully downloaded <b>{len(downloaded_paths)} Reels</b> from @{username} and added to queue.\n"
             f"They will be uploaded to YouTube Shorts automatically (1 reel per hour).",
             parse_mode="HTML",
         )
