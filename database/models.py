@@ -123,7 +123,7 @@ def get_upload_queue() -> List[Dict[str, Any]]:
     """Retrieves videos that have been downloaded but not yet uploaded."""
     with db_session() as conn:
         rows = conn.execute(
-            "SELECT video_id, creator, caption, duration, local_path, download_date FROM videos WHERE status = 'downloaded'"
+            "SELECT video_id, creator, caption, duration, local_path, download_date FROM videos WHERE status = 'downloaded' ORDER BY download_date ASC"
         ).fetchall()
         return [dict(r) for r in rows]
 

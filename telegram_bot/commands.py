@@ -13,7 +13,7 @@ from telegram import Update
 from telegram.ext import ContextTypes
 
 from config import load_settings, save_settings, secrets
-from utils import app_logger, error_logger, get_latest_logs
+from utils import app_logger, error_logger, get_latest_logs, extract_instagram_username
 import database as db
 
 BASE_DIR = Path(__file__).resolve().parent.parent
@@ -180,10 +180,9 @@ async def accounts_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
         
     await update.message.reply_text(msg, parse_mode="Markdown")
 
-async def download_and_upload_recent_reels(username: str, limit: int = 5, update: Update = None):
-    """Downloads and uploads the last 'limit' reels from a profile immediately."""
+async def download_recent_reels_to_queue(username: str, limit: int = 24, update: Update = None):
+    """Downloads the last 'limit' reels from a profile immediately and stores them in the queue."""
     from instagram.downloader import download_reel
-    from youtube.uploader import upload_short
     
     if update:
         await update.message.reply_text(f"⏳ Scanning @{username} for the latest {limit} Reels...")
@@ -206,7 +205,7 @@ async def download_and_upload_recent_reels(username: str, limit: int = 5, update
                     if not db.video_exists(shortcode):
                         local_path = download_reel(shortcode)
                         if local_path:
-                            downloaded.append((shortcode, local_path, post.owner_username, post.caption or ""))
+                            downloaded.append((shortcode, local_path, post.owner_username))
                     count += 1
             return downloaded
         except Exception as e:
@@ -217,37 +216,43 @@ async def download_and_upload_recent_reels(username: str, limit: int = 5, update
     
     if not downloaded_items:
         if update:
-            await update.message.reply_text(f"ℹ️ No new/valid Reels found on @{username} to upload.")
+            await update.message.reply_text(f"ℹ️ No new/valid Reels found on @{username} to add to queue.")
         return
         
     if update:
-        await update.message.reply_text(f"📥 Downloaded {len(downloaded_items)} Reels. Starting uploads...")
-        
-    for shortcode, local_path, creator, caption in downloaded_items:
-        if update:
-            await update.message.reply_text(f"🚀 Uploading `{shortcode}` by @{creator} to YouTube Shorts...")
-            
-        youtube_id = await asyncio.to_thread(upload_short, shortcode, local_path, creator, caption)
-        
-        if youtube_id:
-            if update:
-                await update.message.reply_text(f"✅ Succeeded: `{shortcode}` -> https://youtu.be/{youtube_id}")
-        else:
-            if update:
-                await update.message.reply_text(f"❌ Failed to upload `{shortcode}`.")
+        await update.message.reply_text(
+            f"📥 Successfully downloaded {len(downloaded_items)} Reels from @{username} and added to queue.\n"
+            f"They will be uploaded to YouTube Shorts automatically (1 reel hourly)."
+        )
 
 @admin_only
 async def add_account_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """Adds a new Instagram account to watch and downloads/uploads last 24 videos."""
+    """Adds a new Instagram account to watch and downloads last 24 videos to the queue."""
     if not context.args:
-        await update.message.reply_text("Usage: `/add_account <instagram_username>`")
+        await update.message.reply_text("Usage: `/add_account <instagram_username_or_url>`")
         return
         
-    username = context.args[0].strip().lower()
+    raw_input = context.args[0]
+    username = extract_instagram_username(raw_input)
+    
+    if not username:
+        await update.message.reply_text("❌ Invalid username or URL.")
+        return
+        
+    # Enforce 5-account limit
+    active_accounts = db.get_active_accounts()
+    if len(active_accounts) >= 5 and username not in active_accounts:
+        await update.message.reply_text(
+            f"❌ Limit reached: You can monitor a maximum of 5 Instagram accounts simultaneously.\n"
+            f"Active accounts ({len(active_accounts)}/5): " + ", ".join(f"@{acc}" for acc in active_accounts) + "\n"
+            f"Please remove an active account using `/remove_account <username>` first."
+        )
+        return
+        
     if db.add_account(username):
         await update.message.reply_text(f"✅ Added account @{username} to watchlist.")
-        # Trigger background task for immediate 24 reels download and upload
-        asyncio.create_task(download_and_upload_recent_reels(username, limit=24, update=update))
+        # Trigger background task for immediate 24 reels download to queue
+        asyncio.create_task(download_recent_reels_to_queue(username, limit=24, update=update))
     else:
         await update.message.reply_text(f"❌ Failed to add account @{username}.")
 
@@ -255,10 +260,12 @@ async def add_account_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
 async def remove_account_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Removes an Instagram account from watchlist."""
     if not context.args:
-        await update.message.reply_text("Usage: `/remove_account <instagram_username>`")
+        await update.message.reply_text("Usage: `/remove_account <instagram_username_or_url>`")
         return
         
-    username = context.args[0]
+    raw_input = context.args[0]
+    username = extract_instagram_username(raw_input)
+    
     if db.remove_account(username):
         await update.message.reply_text(f"✅ Removed account @{username} from watchlist.")
     else:

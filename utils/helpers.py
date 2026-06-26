@@ -240,3 +240,22 @@ def manage_disk_storage(min_free_gb: float = 5.0) -> None:
         app_logger.info(f"Disk storage cleanup finished. Deleted {deleted_count} video files.")
     except Exception as e:
         error_logger.error(f"Error during disk storage cleanup: {e}")
+
+import re
+
+def extract_instagram_username(input_str: str) -> str:
+    """
+    Extracts the clean Instagram username from a username string,
+    an @username format, or a profile URL.
+    """
+    input_str = input_str.strip()
+    if input_str.startswith('@'):
+        input_str = input_str[1:]
+    
+    # Matches URLs like https://www.instagram.com/username?igsh=...
+    match = re.search(r'(?:https?://)?(?:www\.)?instagram\.com/([a-zA-Z0-9_\.]+)', input_str, re.IGNORECASE)
+    if match:
+        return match.group(1).lower()
+        
+    return input_str.lower()
+
