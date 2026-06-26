@@ -22,3 +22,7 @@ telegram:
 # Proxy Settings
 proxy:
   enable_rotation: true
+
+# Scheduler Settings
+scheduler:
+  paused: false

@@ -23,23 +23,51 @@ jobs:
             # Create deployment directory if it doesn't exist
             if [ ! -d "/opt/instagram-youtube-shorts-agent" ]; then
               echo "Folder not found. Creating and cloning..."
-              sudo mkdir -p /opt/instagram-youtube-shorts-agent
-              sudo chown -R $USER:$USER /opt/instagram-youtube-shorts-agent
+              mkdir -p /opt/instagram-youtube-shorts-agent
               git clone https://github.com/${{ github.repository }}.git /opt/instagram-youtube-shorts-agent
             fi
 
             cd /opt/instagram-youtube-shorts-agent
-            
+
             # Reset any local changes and pull the latest code from main
             git fetch --all
             git reset --hard origin/main
-            
+
             # Write environment variables from GitHub Secrets to VPS .env
-            echo "TELEGRAM_BOT_TOKEN=${{ secrets.TELEGRAM_BOT_TOKEN }}" > .env
-            echo "INSTAGRAM_USERNAME=${{ secrets.INSTAGRAM_USERNAME }}" >> .env
-            echo "INSTAGRAM_PASSWORD=${{ secrets.INSTAGRAM_PASSWORD }}" >> .env
-            echo "GEMINI_API_KEY=${{ secrets.GEMINI_API_KEY }}" >> .env
-            # Rebuild and restart the container with near zero-downtime (without taking it down first)
+            cat > .env << 'ENVEOF'
+            TELEGRAM_BOT_TOKEN=${{ secrets.TELEGRAM_BOT_TOKEN }}
+            INSTAGRAM_USERNAME=${{ secrets.INSTAGRAM_USERNAME }}
+            INSTAGRAM_PASSWORD=${{ secrets.INSTAGRAM_PASSWORD }}
+            GEMINI_API_KEY=${{ secrets.GEMINI_API_KEY }}
+            ENVEOF
+
+            # Write YouTube OAuth credentials from secret (base64 encoded JSON)
+            mkdir -p config
+            if [ -n "${{ secrets.YOUTUBE_CREDENTIALS_JSON }}" ]; then
+              echo '${{ secrets.YOUTUBE_CREDENTIALS_JSON }}' > config/youtube_credentials.json
+              echo "YouTube credentials written to config/youtube_credentials.json"
+            else
+              echo "WARNING: YOUTUBE_CREDENTIALS_JSON secret not set - YouTube uploads will fail until this is configured"
+            fi
+
+            # Write Instagram cookies if provided
+            if [ -n "${{ secrets.INSTAGRAM_COOKIES }}" ]; then
+              echo '${{ secrets.INSTAGRAM_COOKIES }}' > config/instagram_cookies.txt
+              echo "Instagram cookies written to config/instagram_cookies.txt"
+            fi
+
+            # Rebuild and restart the container with near zero-downtime
             docker compose up --build -d
-            
+
+            # Wait a moment and verify bot is running
+            sleep 5
+            if docker ps | grep -q shortsbot-agent; then
+              echo "✅ Bot container is running!"
+            else
+              echo "❌ Bot container failed to start - checking logs:"
+              docker compose logs --tail=30
+              exit 1
+            fi
+
             echo "🚀 Deployment completed successfully!"
+
