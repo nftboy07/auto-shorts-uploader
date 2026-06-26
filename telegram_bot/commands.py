@@ -4,7 +4,7 @@ import sys
 import psutil
 import re
 import asyncio
-import instaloader
+# instaloader removed: yt-dlp is used for all Instagram downloads now
 from pathlib import Path
 from datetime import datetime
 from typing import List
@@ -181,48 +181,32 @@ async def accounts_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
     await update.message.reply_text(msg, parse_mode="HTML")
 
 async def download_recent_reels_to_queue(username: str, limit: int = 24, update: Update = None):
-    """Downloads the last 'limit' reels from a profile immediately and stores them in the queue."""
-    from instagram.downloader import download_reel
+    """Downloads the last 'limit' reels from a profile immediately and stores them in the queue.
     
+    Uses yt-dlp (via instagram.watcher.download_profile_reels) instead of instaloader
+    to avoid Instagram's 400 Bad Request GraphQL block on get_posts().
+    """
+    from instagram.watcher import download_profile_reels
+
     if update:
         await update.message.reply_text(f"⏳ Scanning @{username} for the latest {limit} Reels...")
-        
-    # We will instantiate a new Instaloader watcher
-    from instagram.watcher import InstagramWatcher
-    watcher = InstagramWatcher()
-    
-    def run_check():
-        watcher.authenticate()
-        try:
-            profile = instaloader.Profile.from_username(watcher.loader.context, username)
-            downloaded = []
-            count = 0
-            for post in profile.get_posts():
-                if count >= limit:
-                    break
-                if post.is_video:
-                    shortcode = post.shortcode
-                    if not db.video_exists(shortcode):
-                        local_path = download_reel(shortcode)
-                        if local_path:
-                            downloaded.append((shortcode, local_path, post.owner_username))
-                    count += 1
-            return downloaded
-        except Exception as e:
-            error_logger.error(f"Error checking profile @{username} on addition: {e}")
-            return []
-            
-    downloaded_items = await asyncio.to_thread(run_check)
-    
-    if not downloaded_items:
+
+    # Run the blocking yt-dlp download in a thread pool so it doesn't freeze the bot
+    downloaded_paths = await asyncio.to_thread(download_profile_reels, username, limit)
+
+    if not downloaded_paths:
         if update:
-            await update.message.reply_text(f"ℹ️ No new/valid Reels found on @{username} to add to queue.")
+            await update.message.reply_text(
+                f"ℹ️ No new/valid Reels found on @{username} to add to queue.\n"
+                f"The account might be private, have no reels, or all reels already downloaded."
+            )
         return
-        
+
     if update:
         await update.message.reply_text(
-            f"📥 Successfully downloaded {len(downloaded_items)} Reels from @{username} and added to queue.\n"
-            f"They will be uploaded to YouTube Shorts automatically (1 reel hourly)."
+            f"📥 Successfully downloaded <b>{len(downloaded_paths)} Reels</b> from @{username} and added to queue.\n"
+            f"They will be uploaded to YouTube Shorts automatically (1 reel per hour).",
+            parse_mode="HTML",
         )
 
 @admin_only
