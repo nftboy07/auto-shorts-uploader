@@ -19,8 +19,7 @@ class InstagramWatcher:
             download_video_thumbnails=False,
             download_geotags=False,
             download_comments=False,
-            save_metadata=False,
-            compress_metadata=False
+            save_metadata=False
         )
         self.username = secrets.INSTAGRAM_USERNAME
         self.password = secrets.INSTAGRAM_PASSWORD

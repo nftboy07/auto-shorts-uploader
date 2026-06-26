@@ -172,13 +172,13 @@ async def accounts_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
         await update.message.reply_text("No Instagram accounts are monitored. Use `/add_account <username>`.")
         return
         
-    msg = "👥 **Monitored Instagram Accounts:**\n\n"
+    msg = "👥 <b>Monitored Instagram Accounts:</b>\n\n"
     for acc in accounts:
         status = "✅ Active" if acc['is_active'] else "❌ Inactive"
         checked = acc['last_checked'][:16] if acc['last_checked'] else "Never"
         msg += f"• @{acc['username']} | {status} | Checked: {checked}\n"
         
-    await update.message.reply_text(msg, parse_mode="Markdown")
+    await update.message.reply_text(msg, parse_mode="HTML")
 
 async def download_recent_reels_to_queue(username: str, limit: int = 24, update: Update = None):
     """Downloads the last 'limit' reels from a profile immediately and stores them in the queue."""
