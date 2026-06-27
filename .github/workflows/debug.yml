@@ -23,11 +23,8 @@ jobs:
           script: |
             cd /opt/instagram-youtube-shorts-agent || true
             
-            echo "=== VPS CONTAINER STATUS ==="
-            docker ps -a || true
+            echo "=== VPS CONFIG DIRECTORY LISTING ==="
+            ls -la config || true
             
-            echo "=== LAST 150 LINES OF APP.LOG ==="
-            tail -n 150 logs/app.log || true
-            
-            echo "=== LAST 50 LINES OF ERROR.LOG ==="
-            tail -n 50 logs/error.log || true
+            echo "=== CHECKING SESSION FILE EXISTENCE ==="
+            ls -la config/session_* || true
