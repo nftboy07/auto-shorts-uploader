@@ -23,8 +23,30 @@ jobs:
           script: |
             cd /opt/instagram-youtube-shorts-agent || true
             
-            echo "=== VPS CONFIG DIRECTORY LISTING ==="
-            ls -la config || true
+            echo "=== TESTING INSTALOADER SESSION VALIDITY ==="
+            docker exec shortsbot-agent python -c "
+            import instaloader
+            import os
             
-            echo "=== CHECKING SESSION FILE EXISTENCE ==="
-            ls -la config/session_* || true
+            loader = instaloader.Instaloader()
+            try:
+                # Load session from file
+                # Instaloader expects session file in standard directory or we can load it from file directly
+                # Wait, save_session_to_file saves it to the path, we can load it using load_session_from_file
+                username = 'rashaaeeyyy'
+                session_path = '/app/config/session_' + username
+                if os.path.exists(session_path):
+                    loader.load_session_from_file(username, session_path)
+                    print('Successfully loaded session from:', session_path)
+                    
+                    # Test getting profile info using this session
+                    profile = instaloader.Profile.from_username(loader.context, 'noryx.amv')
+                    print('Profile fetched successfully!')
+                    print('Username:', profile.username)
+                    print('User ID:', profile.userid)
+                    print('Followers:', profile.followers)
+                else:
+                    print('Session file does not exist at:', session_path)
+            except Exception as e:
+                print('Instaloader session test failed:', e)
+            " || true
