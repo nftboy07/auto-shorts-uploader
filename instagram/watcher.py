@@ -127,18 +127,105 @@ def _api_request(url: str, cookies: Dict[str, str], proxy: Optional[str] = None)
     return None
 
 
+def _resolve_user_id_from_html(username: str, cookies: Dict[str, str], proxy: Optional[str] = None) -> Optional[str]:
+    """Resolve user ID by parsing the profile page HTML directly (less rate-limited)."""
+    url = f"https://www.instagram.com/{username}/"
+    headers = {
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8",
+        "Accept-Language": "en-US,en;q=0.9",
+        "Cookie": _cookie_header(cookies),
+    }
+    
+    req = urllib.request.Request(url, headers=headers)
+    if proxy:
+        proxy_handler = urllib.request.ProxyHandler({"http": proxy, "https": proxy})
+        opener = urllib.request.build_opener(proxy_handler)
+    else:
+        opener = urllib.request.build_opener()
+        
+    try:
+        with opener.open(req, timeout=15) as resp:
+            html = resp.read().decode("utf-8", errors="ignore")
+            
+            # Pattern 1: instapp:owner_id
+            match = re.search(r'property="instapp:owner_id"\s+content="([0-9]+)"', html)
+            if match:
+                uid = match.group(1)
+                app_logger.info(f"Resolved @{username} via instapp:owner_id → {uid}")
+                return uid
+                
+            # Pattern 2: profilePage_ID
+            match = re.search(r'"profilePage_([0-9]+)"', html)
+            if match:
+                uid = match.group(1)
+                app_logger.info(f"Resolved @{username} via profilePage_ID → {uid}")
+                return uid
+                
+            # Pattern 3: owner ID
+            match_owner = re.search(r'"owner":\s*\{\s*"id"\s*:\s*"([0-9]+)"', html)
+            if match_owner:
+                uid = match_owner.group(1)
+                app_logger.info(f"Resolved @{username} via owner id → {uid}")
+                return uid
+                
+            app_logger.warning(f"Could not find user ID in HTML for @{username}. HTML length: {len(html)}")
+            
+    except Exception as e:
+        app_logger.warning(f"HTML profile resolution failed for @{username}: {e}")
+        
+    return None
+
+
 def _get_user_id(username: str, cookies: Dict[str, str], proxy: Optional[str] = None) -> Optional[str]:
-    """Resolve Instagram username → numeric user ID via web_profile_info API."""
-    url = f"https://i.instagram.com/api/v1/users/web_profile_info/?username={username}"
-    data = _api_request(url, cookies, proxy)
+    """Resolve Instagram username → numeric user ID using multiple fallbacks."""
+    # Method 1: True mobile API endpoint (most reliable with mobile app headers)
+    url_mobile = f"{IG_API_BASE}/users/{username}/usernameinfo/"
+    app_logger.info(f"Resolving @{username} via mobile API...")
+    data = _api_request(url_mobile, cookies, proxy)
     if data:
         try:
-            user_id = data["data"]["user"]["id"]
-            app_logger.info(f"Resolved @{username} → user_id={user_id}")
+            user_id = data.get("user", {}).get("pk")
+            if user_id:
+                app_logger.info(f"Resolved @{username} via mobile API → user_id={user_id}")
+                return str(user_id)
+        except Exception as e:
+            app_logger.warning(f"Mobile API parse failed for @{username}: {e}")
+
+    # Method 2: Parse profile page HTML directly (very lenient, standard browser UA)
+    app_logger.info(f"Resolving @{username} via HTML profile page...")
+    user_id_html = _resolve_user_id_from_html(username, cookies, proxy)
+    if user_id_html:
+        return user_id_html
+
+    # Method 3: Web profile info endpoint (legacy fallback with web headers)
+    url_web = f"{IG_API_BASE}/users/web_profile_info/?username={username}"
+    app_logger.info(f"Resolving @{username} via web API fallback...")
+    
+    headers_web = {
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+        "X-IG-App-ID": "936619743392459",
+        "Cookie": _cookie_header(cookies),
+    }
+    
+    req = urllib.request.Request(url_web, headers=headers_web)
+    if proxy:
+        proxy_handler = urllib.request.ProxyHandler({"http": proxy, "https": proxy})
+        opener = urllib.request.build_opener(proxy_handler)
+    else:
+        opener = urllib.request.build_opener()
+        
+    try:
+        with opener.open(req, timeout=15) as resp:
+            web_data = json.loads(resp.read().decode("utf-8"))
+            user_id = web_data["data"]["user"]["id"]
+            app_logger.info(f"Resolved @{username} via web API fallback → user_id={user_id}")
             return str(user_id)
-        except (KeyError, TypeError) as e:
-            error_logger.error(f"Could not parse user_id for @{username}: {e} | response: {str(data)[:300]}")
+    except Exception as e:
+        error_logger.error(f"Web API fallback failed for @{username}: {e}")
+
     return None
+
 
 
 def _get_reels_from_api(user_id: str, username: str, cookies: Dict[str, str],
