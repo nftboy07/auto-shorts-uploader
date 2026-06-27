@@ -23,90 +23,89 @@ jobs:
           script: |
             cd /opt/instagram-youtube-shorts-agent || true
             
-            echo "=== WRITING AND RUNNING HTML SCRAPER TEST ==="
+            echo "=== WRITING AND RUNNING HTML SCRAPER TEST WITH/WITHOUT PROXY ==="
             cat << 'HTMLTESTEOF' > vps_test_html.py
             import os
             import re
             import urllib.request
             import urllib.parse
             import json
+            import http.cookiejar
 
             def test_html():
                 cookies_path = "config/instagram_cookies.txt"
                 if not os.path.exists(cookies_path):
                     print("Cookies file not found at", cookies_path)
                     return
-                    
-                cookies = {}
-                with open(cookies_path, "r", encoding="utf-8") as f:
-                    for line in f:
-                        line = line.strip()
-                        if not line or line.startswith("#"):
+                
+                cookie_jar = http.cookiejar.MozillaCookieJar()
+                try:
+                    with open(cookies_path, 'r') as f:
+                        content = f.read()
+                    lines = content.splitlines()
+                    fixed_lines = []
+                    for line in lines:
+                        if not line.strip() or line.startswith("#"):
+                            fixed_lines.append(line)
                             continue
                         parts = line.split("\t")
                         if len(parts) < 7:
                             parts = re.split(r'\s+', line)
-                        if len(parts) >= 7 and ("instagram.com" in parts[0] or parts[0] == ""):
-                            cookies[parts[5]] = parts[6]
-                            
-                cookie_str = "; ".join(f"{k}={v}" for k, v in cookies.items())
-                print(f"Loaded {len(cookies)} cookies. sessionid present: {'sessionid' in cookies}")
-                if 'sessionid' in cookies:
-                    print("sessionid prefix:", cookies['sessionid'][:10] + "...")
+                        if len(parts) >= 7:
+                            fixed_lines.append("\t".join(parts[:7]))
+                    
+                    fixed_content = "\n".join(fixed_lines)
+                    temp_cookie_path = "config/temp_cookies.txt"
+                    with open(temp_cookie_path, "w") as f_temp:
+                        f_temp.write(fixed_content)
+                        
+                    cookie_jar.load(temp_cookie_path, ignore_discard=True, ignore_expires=True)
+                    print(f"Loaded cookies into jar. Total cookies: {len(cookie_jar)}")
+                except Exception as e:
+                    print("Failed to load cookie jar:", e)
+                    return
                 
                 username = "noryx.amv"
                 url = f"https://www.instagram.com/{username}/"
-                headers = {
-                    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-                    "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8",
-                    "Cookie": cookie_str,
-                }
                 
-                req = urllib.request.Request(url, headers=headers)
-                
-                # Try with proxy
+                # Test Case 1: WITH Proxy
+                print("\n--- TEST CASE 1: WITH PROXY ---")
+                cookie_handler = urllib.request.HTTPCookieProcessor(cookie_jar)
                 proxy = "http://127.0.0.1:1081"
                 proxy_handler = urllib.request.ProxyHandler({"http": proxy, "https": proxy})
-                opener = urllib.request.build_opener(proxy_handler)
-                
+                opener_proxy = urllib.request.build_opener(proxy_handler, cookie_handler)
+                opener_proxy.addheaders = [
+                    ("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"),
+                    ("Accept", "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8"),
+                ]
                 try:
-                    print("Fetching profile page...")
-                    with opener.open(req, timeout=15) as resp:
+                    with opener_proxy.open(url, timeout=10) as resp:
                         html = resp.read().decode("utf-8", errors="ignore")
                         print("HTML Length:", len(html))
-                        print("HTTP Status:", resp.status)
-                        
-                        # Check for common error keywords
-                        for kw in ["login", "rate limit", "block", "checkpoint", "robot"]:
-                            if kw in html.lower():
-                                print(f"Found keyword '{kw}' in HTML!")
-                        
-                        # Print the title tag
-                        title = re.search(r"<title>(.*?)</title>", html, re.IGNORECASE)
-                        if title:
-                            print("Title tag:", title.group(1))
-                            
-                        # Search for potential user ID occurrences
-                        print("Searching for digit patterns...")
-                        uids = re.findall(r'"user_id":"([0-9]+)"', html)
-                        print("user_id occurrences:", list(set(uids))[:5])
-                        
-                        uids2 = re.findall(r'"id":"([0-9]+)"', html)
-                        print("id occurrences:", list(set(uids2))[:10])
-                        
-                        uids3 = re.findall(r'profilePage_([0-9]+)', html)
-                        print("profilePage_ occurrences:", list(set(uids3))[:5])
-                        
-                        uids4 = re.findall(r'instapp:owner_id"\s+content="([0-9]+)"', html)
-                        print("instapp:owner_id occurrences:", uids4)
-                        
-                        # Save snippet of HTML to inspect
-                        with open("logs/profile_snippet.html", "w", encoding="utf-8") as out:
-                            out.write(html[:100000])
-                        print("Wrote first 100k of HTML to logs/profile_snippet.html")
-                        
+                        print("Final URL:", resp.geturl())
+                        print("Title:", re.search(r"<title>(.*?)</title>", html, re.IGNORECASE).group(1) if re.search(r"<title>(.*?)</title>", html, re.IGNORECASE) else "None")
                 except Exception as e:
-                    print("Request failed:", e)
+                    print("Proxy Request failed:", e)
+
+                # Test Case 2: WITHOUT Proxy (Direct Connection)
+                print("\n--- TEST CASE 2: WITHOUT PROXY ---")
+                cookie_handler2 = urllib.request.HTTPCookieProcessor(cookie_jar)
+                opener_direct = urllib.request.build_opener(cookie_handler2)
+                opener_direct.addheaders = [
+                    ("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"),
+                    ("Accept", "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8"),
+                ]
+                try:
+                    with opener_direct.open(url, timeout=10) as resp:
+                        html = resp.read().decode("utf-8", errors="ignore")
+                        print("HTML Length:", len(html))
+                        print("Final URL:", resp.geturl())
+                        print("Title:", re.search(r"<title>(.*?)</title>", html, re.IGNORECASE).group(1) if re.search(r"<title>(.*?)</title>", html, re.IGNORECASE) else "None")
+                except Exception as e:
+                    print("Direct Request failed:", e)
+                    
+                if os.path.exists(temp_cookie_path):
+                    os.remove(temp_cookie_path)
 
             if __name__ == '__main__':
                 test_html()
@@ -114,9 +113,3 @@ jobs:
             
             python3 vps_test_html.py || true
             rm vps_test_html.py || true
-            
-            echo "=== VPS CONTAINER STATUS ==="
-            docker ps -a || true
-            
-            echo "=== DOCKER COMPOSE LOGS ==="
-            docker compose logs --tail=100 || true
