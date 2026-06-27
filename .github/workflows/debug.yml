@@ -1,0 +1,39 @@
+name: Debug VPS Logs
+
+on:
+  push:
+    branches:
+      - debug-vps
+  workflow_dispatch:
+
+jobs:
+  debug:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Run Diagnostics on VPS via SSH
+        uses: appleboy/ssh-action@v1.0.3
+        with:
+          host: ${{ secrets.VPS_SSH_HOST }}
+          username: ${{ secrets.VPS_SSH_USER }}
+          key: ${{ secrets.VPS_SSH_KEY }}
+          port: ${{ secrets.VPS_SSH_PORT || '22' }}
+          script: |
+            echo "=== VPS CONTAINER STATUS ==="
+            docker ps -a || true
+            
+            echo "=== DOCKER COMPOSE LOGS ==="
+            cd /opt/instagram-youtube-shorts-agent
+            docker compose logs --tail=150 || true
+            
+            echo "=== BOT APP LOGS ==="
+            cat logs/app.log | tail -n 120 || true
+            
+            echo "=== BOT ERROR LOGS ==="
+            cat logs/error.log | tail -n 120 || true
+            
+            echo "=== DATABASE CHECKS ==="
+            sqlite3 database/shortsbot.db "SELECT * FROM accounts;" || true
+            sqlite3 database/shortsbot.db "SELECT status, COUNT(*) FROM videos GROUP BY status;" || true
