@@ -23,93 +23,50 @@ jobs:
           script: |
             cd /opt/instagram-youtube-shorts-agent || true
             
-            echo "=== WRITING AND RUNNING HTML SCRAPER TEST WITH/WITHOUT PROXY ==="
-            cat << 'HTMLTESTEOF' > vps_test_html.py
+            echo "=== WRITING AND RUNNING INSTALOADER LOGIN TEST VIA DOCKER CP ==="
+            cat << 'LOGINEOF' > vps_test_login.py
             import os
-            import re
-            import urllib.request
-            import urllib.parse
-            import json
-            import http.cookiejar
-
-            def test_html():
-                cookies_path = "config/instagram_cookies.txt"
-                if not os.path.exists(cookies_path):
-                    print("Cookies file not found at", cookies_path)
-                    return
-                
-                cookie_jar = http.cookiejar.MozillaCookieJar()
-                try:
-                    with open(cookies_path, 'r') as f:
-                        content = f.read()
-                    lines = content.splitlines()
-                    fixed_lines = []
-                    for line in lines:
-                        if not line.strip() or line.startswith("#"):
-                            fixed_lines.append(line)
-                            continue
-                        parts = line.split("\t")
-                        if len(parts) < 7:
-                            parts = re.split(r'\s+', line)
-                        if len(parts) >= 7:
-                            fixed_lines.append("\t".join(parts[:7]))
-                    
-                    fixed_content = "\n".join(fixed_lines)
-                    temp_cookie_path = "config/temp_cookies.txt"
-                    with open(temp_cookie_path, "w") as f_temp:
-                        f_temp.write(fixed_content)
-                        
-                    cookie_jar.load(temp_cookie_path, ignore_discard=True, ignore_expires=True)
-                    print(f"Loaded cookies into jar. Total cookies: {len(cookie_jar)}")
-                except Exception as e:
-                    print("Failed to load cookie jar:", e)
-                    return
-                
-                username = "noryx.amv"
-                url = f"https://www.instagram.com/{username}/"
-                
-                # Test Case 1: WITH Proxy
-                print("\n--- TEST CASE 1: WITH PROXY ---")
-                cookie_handler = urllib.request.HTTPCookieProcessor(cookie_jar)
-                proxy = "http://127.0.0.1:1081"
-                proxy_handler = urllib.request.ProxyHandler({"http": proxy, "https": proxy})
-                opener_proxy = urllib.request.build_opener(proxy_handler, cookie_handler)
-                opener_proxy.addheaders = [
-                    ("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"),
-                    ("Accept", "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8"),
-                ]
-                try:
-                    with opener_proxy.open(url, timeout=10) as resp:
-                        html = resp.read().decode("utf-8", errors="ignore")
-                        print("HTML Length:", len(html))
-                        print("Final URL:", resp.geturl())
-                        print("Title:", re.search(r"<title>(.*?)</title>", html, re.IGNORECASE).group(1) if re.search(r"<title>(.*?)</title>", html, re.IGNORECASE) else "None")
-                except Exception as e:
-                    print("Proxy Request failed:", e)
-
-                # Test Case 2: WITHOUT Proxy (Direct Connection)
-                print("\n--- TEST CASE 2: WITHOUT PROXY ---")
-                cookie_handler2 = urllib.request.HTTPCookieProcessor(cookie_jar)
-                opener_direct = urllib.request.build_opener(cookie_handler2)
-                opener_direct.addheaders = [
-                    ("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"),
-                    ("Accept", "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8"),
-                ]
-                try:
-                    with opener_direct.open(url, timeout=10) as resp:
-                        html = resp.read().decode("utf-8", errors="ignore")
-                        print("HTML Length:", len(html))
-                        print("Final URL:", resp.geturl())
-                        print("Title:", re.search(r"<title>(.*?)</title>", html, re.IGNORECASE).group(1) if re.search(r"<title>(.*?)</title>", html, re.IGNORECASE) else "None")
-                except Exception as e:
-                    print("Direct Request failed:", e)
-                    
-                if os.path.exists(temp_cookie_path):
-                    os.remove(temp_cookie_path)
-
-            if __name__ == '__main__':
-                test_html()
-            HTMLTESTEOF
+            import instaloader
             
-            python3 vps_test_html.py || true
-            rm vps_test_html.py || true
+            username = os.environ.get("INSTAGRAM_USERNAME", "rashaaeeyyy")
+            password = os.environ.get("INSTAGRAM_PASSWORD", "ILOVEeng10@")
+            
+            print(f"Username from env: {username}")
+            print(f"Password from env length: {len(password) if password else 0}")
+            
+            loader = instaloader.Instaloader(
+                download_pictures=False,
+                download_videos=False,
+                download_video_thumbnails=False,
+                download_geotags=False,
+                download_comments=False,
+                save_metadata=False
+            )
+            
+            try:
+                print("Attempting login...")
+                loader.login(username, password)
+                print("SUCCESS: Logged in successfully!")
+                
+                # Print cookies
+                session = loader.context._session
+                print("Session cookies:")
+                for c in session.cookies:
+                    print(f"  {c.name}: {c.value[:10]}...")
+            except instaloader.TwoFactorAuthRequiredException:
+                print("FAILED: 2FA Required!")
+            except Exception as e:
+                print(f"FAILED: Login failed: {e}")
+            LOGINEOF
+            
+            # Copy to container
+            CONTAINER_ID=$(docker ps -q -f name=shortsbot-agent)
+            echo "Container ID: $CONTAINER_ID"
+            docker cp vps_test_login.py $CONTAINER_ID:/app/vps_test_login.py || true
+            
+            # Run inside container
+            docker compose exec -T shortsbot python /app/vps_test_login.py || true
+            
+            # Clean up
+            docker compose exec -T shortsbot rm /app/vps_test_login.py || true
+            rm vps_test_login.py || true
