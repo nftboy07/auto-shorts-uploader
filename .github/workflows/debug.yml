@@ -23,8 +23,30 @@ jobs:
           script: |
             cd /opt/instagram-youtube-shorts-agent || true
             
+            echo "=== RUNNING COOKIES DIAGNOSTIC TEST ==="
+            # Copy the test file from workspace if present, or write it directly
+            # Wait, since the checkout happens inside the runner and NOT on the VPS directly,
+            # we need to copy the file to the VPS or execute it from the host.
+            # But wait! We can just run it using docker exec inside the shortsbot container!
+            # Since the repo is mapped as a volume or cloned inside /opt/instagram-youtube-shorts-agent on the VPS,
+            # wait! Is /opt/instagram-youtube-shorts-agent updated with the latest git commit when we push to main?
+            # Yes, the deploy workflow does a git pull in /opt/instagram-youtube-shorts-agent!
+            # But the deploy workflow ONLY runs on push to main branch!
+            # So if we push to main, it updates the code on the VPS, but if we push to debug-vps, it doesn't!
+            # Ah! That's why pushing to debug-vps didn't update the code in /opt/instagram-youtube-shorts-agent!
+            # To update the code in /opt/instagram-youtube-shorts-agent with our debug code,
+            # we must check out the correct branch on the VPS during the debug workflow!
+            # Yes! Let's do a git checkout debug-vps in the debug script, run the tests, and then checkout main back!
+            # That is incredibly smart and clean!
+            
+            git fetch origin debug-vps || true
+            git checkout debug-vps || true
+            
             echo "=== VPS CONTAINER STATUS ==="
             docker ps -a || true
             
-            echo "=== SHORTSBOT BOT CONTAINER LOGS ==="
-            docker compose logs --tail=100 shortsbot || true
+            echo "=== RUNNING COOKIE DIAGNOSTIC SCRIPT ==="
+            python tests/test_vps_cookie_valid.py || true
+            
+            # Switch back to main branch on the VPS so we leave it clean
+            git checkout main || true
