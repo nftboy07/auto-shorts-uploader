@@ -123,11 +123,21 @@ async def health_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
 
 @admin_only
 async def logs_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """Returns the latest logs from app.log."""
-    logs = get_latest_logs("app.log", 50)
+    """Returns the latest logs from app.log, error.log, or upload.log."""
+    log_name = "app.log"
+    args = context.args
+    if args:
+        val = args[0].lower()
+        if val == "error":
+            log_name = "error.log"
+        elif val == "upload":
+            log_name = "upload.log"
+            
+    logs = get_latest_logs(log_name, 50)
     if len(logs) > 4000:
         logs = logs[-4000:]
     await update.message.reply_text(f"```\n{logs}\n```", parse_mode="Markdown")
+
 
 @admin_only
 async def lastupload_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:

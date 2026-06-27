@@ -69,13 +69,24 @@ def _parse_cookies(cookies_path: str) -> Dict[str, str]:
                 line = line.strip()
                 if not line or line.startswith("#"):
                     continue
+                
+                # Split by tab first, fallback to regex split of any whitespace
                 parts = line.split("\t")
-                if len(parts) >= 7 and "instagram.com" in parts[0]:
+                if len(parts) < 7:
+                    parts = re.split(r'\s+', line)
+                    
+                if len(parts) >= 7 and ("instagram.com" in parts[0] or parts[0] == ""):
                     name, value = parts[5], parts[6]
+                    # Strip surrounding quotes from value if present
+                    if value.startswith('"') and value.endswith('"'):
+                        value = value[1:-1]
                     cookies[name] = value
     except Exception as e:
         error_logger.error(f"Failed to parse cookies from {cookies_path}: {e}")
+    
+    app_logger.info(f"Parsed {len(cookies)} cookies from {cookies_path}")
     return cookies
+
 
 
 def _cookie_header(cookies: Dict[str, str]) -> str:

@@ -45,6 +45,13 @@ app_logger = setup_logger("app", "app.log")
 error_logger = setup_logger("error", "error.log", level=logging.ERROR)
 upload_logger = setup_logger("upload", "upload.log")
 
+# Add app.log handler to error_logger so errors also show in app.log
+for handler in app_logger.handlers:
+    if isinstance(handler, logging.FileHandler) or isinstance(handler, RotatingFileHandler):
+        error_logger.addHandler(handler)
+
+
+
 def get_latest_logs(log_name: str = "app.log", lines_count: int = 100) -> str:
     """Returns the last N lines of a specific log file."""
     log_path = LOGS_DIR / log_name
