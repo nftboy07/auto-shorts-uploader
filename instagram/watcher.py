@@ -1,11 +1,21 @@
+"""
+Instagram watcher using a two-stage approach:
+  1. Instagram private mobile API  →  get list of reel shortcodes
+  2. yt-dlp                        →  download each individual reel URL
+
+This avoids yt-dlp's broken profile-page extractor (which returns 0 results
+because Instagram's /reels/ page is JavaScript-rendered).
+"""
 import os
-import yt_dlp
-import subprocess
-import json
 import re
+import json
+import time
+import http.cookiejar
+import urllib.request
+import urllib.error
+import yt_dlp
 from pathlib import Path
-from datetime import datetime
-from typing import List, Optional, Dict, Any
+from typing import List, Optional, Dict, Any, Tuple
 
 from utils import app_logger, error_logger
 from database import get_active_accounts, update_account_checked, video_exists, add_video, file_hash_exists
@@ -16,316 +26,393 @@ BASE_DIR = Path(__file__).resolve().parent.parent
 DOWNLOADS_DIR = BASE_DIR / "downloads"
 DOWNLOADS_DIR.mkdir(exist_ok=True)
 
+# Instagram private API constants (mobile app IDs — well-known public values)
+IG_APP_ID = "936619743392459"
+IG_API_BASE = "https://i.instagram.com/api/v1"
+IG_USER_AGENT = (
+    "Instagram 275.0.0.27.98 Android (33/13; 420dpi; 1080x2400; "
+    "samsung; SM-G991B; o1s; exynos2100; en_US; 458229258)"
+)
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Cookie helpers
+# ─────────────────────────────────────────────────────────────────────────────
 
 def _find_cookies_path() -> Optional[str]:
-    """Return first existing Instagram cookies file path."""
+    """Return the first valid Instagram Netscape-format cookies file."""
     candidates = [
         str(BASE_DIR / "config" / "instagram_cookies.txt"),
         str(BASE_DIR / "instagram_cookies.txt"),
-        "/tmp/instagram_cookies.txt",
     ]
-    for p in candidates:
-        if os.path.exists(p):
-            # Validate it has instagram content
+    for path in candidates:
+        if os.path.exists(path):
             try:
-                with open(p, "r") as f:
-                    content = f.read()
+                content = open(path).read()
                 if "instagram.com" in content and "sessionid" in content:
-                    app_logger.info(f"Valid Instagram cookies found at: {p}")
-                    return p
+                    app_logger.info(f"Valid cookies file: {path}")
+                    return path
                 else:
-                    app_logger.warning(f"Cookies file at {p} doesn't look valid (missing sessionid)")
+                    app_logger.warning(f"Cookies at {path} missing sessionid")
             except Exception as e:
-                app_logger.warning(f"Could not read cookies at {p}: {e}")
-    app_logger.warning("No valid Instagram cookies file found - will try unauthenticated")
+                app_logger.warning(f"Cannot read {path}: {e}")
+    app_logger.warning("No valid Instagram cookies file found")
     return None
 
 
-def _get_ydl_opts(limit: int, output_template: str, proxy: Optional[str] = None) -> dict:
-    """Build yt-dlp options for Instagram downloading."""
-    opts = {
-        "quiet": False,          # Enable output so errors are visible in logs
-        "no_warnings": False,    # Show warnings
-        "extract_flat": "in_playlist",  # Get playlist entries without downloading first
-        "playlistend": limit,
-        "outtmpl": output_template,
-        "format": "bestvideo[ext=mp4]+bestaudio[ext=m4a]/best[ext=mp4]/mp4/best",
-        "merge_output_format": "mp4",
-        "retries": 5,
-        "fragment_retries": 5,
-        "ignoreerrors": True,    # Skip individual failed videos, don't abort
-        "http_headers": {
-            "User-Agent": (
-                "Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) "
-                "AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 "
-                "Mobile/15E148 Safari/604.1"
-            ),
-        },
-    }
+def _parse_cookies(cookies_path: str) -> Dict[str, str]:
+    """Parse Netscape cookie file and return a dict of name→value for instagram.com."""
+    cookies: Dict[str, str] = {}
+    try:
+        with open(cookies_path, "r", encoding="utf-8") as f:
+            for line in f:
+                line = line.strip()
+                if not line or line.startswith("#"):
+                    continue
+                parts = line.split("\t")
+                if len(parts) >= 7 and "instagram.com" in parts[0]:
+                    name, value = parts[5], parts[6]
+                    cookies[name] = value
+    except Exception as e:
+        error_logger.error(f"Failed to parse cookies from {cookies_path}: {e}")
+    return cookies
 
-    cookies_path = _find_cookies_path()
-    if cookies_path:
-        opts["cookiefile"] = cookies_path
+
+def _cookie_header(cookies: Dict[str, str]) -> str:
+    """Build Cookie: header string from dict."""
+    return "; ".join(f"{k}={v}" for k, v in cookies.items())
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Instagram private API — get user ID + reel list
+# ─────────────────────────────────────────────────────────────────────────────
+
+def _api_request(url: str, cookies: Dict[str, str], proxy: Optional[str] = None) -> Optional[dict]:
+    """Make an authenticated request to the Instagram private API."""
+    headers = {
+        "User-Agent": IG_USER_AGENT,
+        "X-IG-App-ID": IG_APP_ID,
+        "X-IG-Capabilities": "3brTvw==",
+        "X-IG-Connection-Type": "WIFI",
+        "Accept-Language": "en-US",
+        "Cookie": _cookie_header(cookies),
+    }
+    req = urllib.request.Request(url, headers=headers)
 
     if proxy:
-        opts["proxy"] = proxy
-        app_logger.info(f"Using proxy for yt-dlp: {proxy}")
+        proxy_handler = urllib.request.ProxyHandler({"http": proxy, "https": proxy})
+        opener = urllib.request.build_opener(proxy_handler)
+    else:
+        opener = urllib.request.build_opener()
 
+    try:
+        with opener.open(req, timeout=15) as resp:
+            data = json.loads(resp.read().decode("utf-8"))
+            return data
+    except urllib.error.HTTPError as e:
+        error_logger.error(f"API HTTP {e.code} for {url}: {e.read()[:300].decode(errors='replace')}")
+    except Exception as e:
+        error_logger.error(f"API request failed for {url}: {e}")
+    return None
+
+
+def _get_user_id(username: str, cookies: Dict[str, str], proxy: Optional[str] = None) -> Optional[str]:
+    """Resolve Instagram username → numeric user ID via web_profile_info API."""
+    url = f"https://i.instagram.com/api/v1/users/web_profile_info/?username={username}"
+    data = _api_request(url, cookies, proxy)
+    if data:
+        try:
+            user_id = data["data"]["user"]["id"]
+            app_logger.info(f"Resolved @{username} → user_id={user_id}")
+            return str(user_id)
+        except (KeyError, TypeError) as e:
+            error_logger.error(f"Could not parse user_id for @{username}: {e} | response: {str(data)[:300]}")
+    return None
+
+
+def _get_reels_from_api(user_id: str, username: str, cookies: Dict[str, str],
+                         limit: int = 24, proxy: Optional[str] = None) -> List[Tuple[str, str]]:
+    """
+    Fetch reel shortcodes from Instagram API.
+    Returns list of (shortcode, url) tuples.
+    """
+    results: List[Tuple[str, str]] = []
+    max_id = None
+
+    while len(results) < limit:
+        url = f"{IG_API_BASE}/clips/user/?target_user_id={user_id}&page_size=12"
+        if max_id:
+            url += f"&max_id={max_id}"
+
+        data = _api_request(url, cookies, proxy)
+        if not data:
+            break
+
+        items = data.get("items", [])
+        if not items:
+            app_logger.info(f"No more reels from API for @{username}")
+            break
+
+        for item in items:
+            media = item.get("media", item)
+            code = media.get("code") or media.get("shortcode")
+            media_id = media.get("pk") or media.get("id")
+            media_type = media.get("media_type", 0)
+
+            # media_type 2 = VIDEO, clips always video
+            if not code and not media_id:
+                continue
+
+            reel_url = f"https://www.instagram.com/reel/{code}/" if code else None
+            if reel_url and (code, reel_url) not in results:
+                results.append((code or str(media_id), reel_url))
+                if len(results) >= limit:
+                    break
+
+        # Pagination
+        paging = data.get("paging_info") or {}
+        more = paging.get("more_available", False)
+        max_id = paging.get("max_id")
+        if not more or not max_id:
+            break
+        time.sleep(0.5)
+
+    app_logger.info(f"API returned {len(results)} reel URLs for @{username}")
+    return results[:limit]
+
+
+def _get_reels_fallback_feed(user_id: str, username: str, cookies: Dict[str, str],
+                               limit: int = 24, proxy: Optional[str] = None) -> List[Tuple[str, str]]:
+    """Fallback: use user feed API to find video posts."""
+    results: List[Tuple[str, str]] = []
+    url = f"{IG_API_BASE}/feed/user/{user_id}/?count={limit}"
+    data = _api_request(url, cookies, proxy)
+    if not data:
+        return results
+    for item in data.get("items", []):
+        if item.get("media_type") != 2:  # 2 = video
+            continue
+        code = item.get("code") or item.get("shortcode")
+        if code:
+            results.append((code, f"https://www.instagram.com/reel/{code}/"))
+        if len(results) >= limit:
+            break
+    app_logger.info(f"Feed fallback returned {len(results)} videos for @{username}")
+    return results
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# yt-dlp download + DB save
+# ─────────────────────────────────────────────────────────────────────────────
+
+def _ydl_opts(cookies_path: Optional[str], proxy: Optional[str]) -> dict:
+    opts = {
+        "quiet": True,
+        "no_warnings": True,
+        "ignoreerrors": True,
+        "format": "bestvideo[ext=mp4]+bestaudio[ext=m4a]/best[ext=mp4]/mp4/best",
+        "merge_output_format": "mp4",
+        "outtmpl": str(DOWNLOADS_DIR / "%(id)s.%(ext)s"),
+        "retries": 5,
+        "fragment_retries": 5,
+        "http_headers": {
+            "User-Agent": IG_USER_AGENT,
+        },
+    }
+    if cookies_path:
+        opts["cookiefile"] = cookies_path
+    if proxy:
+        opts["proxy"] = proxy
     return opts
 
 
-def _save_entry_to_db(info: Dict[str, Any], downloaded_file: str) -> Optional[str]:
-    """
-    Validates a downloaded file and saves it to the database queue.
-    Returns local_path on success, None on rejection.
-    """
+def _save_to_db(info: Dict[str, Any], local_path: str) -> Optional[str]:
+    """Validate downloaded file and add to the upload queue. Returns path or None."""
     video_id = info.get("id", "")
-    uploader = info.get("uploader") or info.get("uploader_id") or info.get("channel") or "unknown"
-    caption = info.get("description") or info.get("title") or f"Reel by @{uploader}"
+    uploader = (info.get("uploader") or info.get("uploader_id")
+                or info.get("channel") or "unknown")
+    caption = (info.get("description") or info.get("title")
+               or f"Reel by @{uploader}")
 
-    if not os.path.exists(downloaded_file):
-        error_logger.error(f"File not found after download: {downloaded_file}")
+    if not os.path.exists(local_path):
+        error_logger.error(f"File missing after download: {local_path}")
         return None
 
     if video_exists(video_id):
-        app_logger.info(f"Reel {video_id} already in DB, skipping.")
+        app_logger.info(f"Reel {video_id} already in DB, skipping")
         try:
-            os.remove(downloaded_file)
+            os.remove(local_path)
         except Exception:
             pass
         return None
 
-    # ffprobe metadata
-    metadata = get_video_metadata(downloaded_file)
+    metadata = get_video_metadata(local_path)
     if not metadata:
-        app_logger.warning(f"ffprobe failed for {video_id} at {downloaded_file}. Rejecting.")
+        app_logger.warning(f"ffprobe failed for {video_id}, skipping")
         try:
-            os.remove(downloaded_file)
+            os.remove(local_path)
         except Exception:
             pass
         return None
 
     duration = metadata["duration"]
 
-    # Trim to 60s if needed
     if duration > 60.0:
         trimmed = str(DOWNLOADS_DIR / f"{video_id}_trimmed.mp4")
-        app_logger.info(f"Trimming {video_id} from {duration:.1f}s to 60s...")
-        if trim_video(downloaded_file, trimmed, 60.0):
+        app_logger.info(f"Trimming {video_id} ({duration:.1f}s → 60s)")
+        if trim_video(local_path, trimmed, 60.0):
             try:
-                os.remove(downloaded_file)
+                os.remove(local_path)
             except Exception:
                 pass
-            downloaded_file = trimmed
-            metadata = get_video_metadata(downloaded_file)
+            local_path = trimmed
+            metadata = get_video_metadata(local_path)
             if not metadata:
                 return None
             duration = metadata["duration"]
         else:
-            app_logger.warning(f"Trim failed for {video_id}. Rejecting.")
             try:
-                os.remove(downloaded_file)
+                os.remove(local_path)
             except Exception:
                 pass
             return None
 
-    # Duplicate hash check
-    file_hash = calculate_file_hash(downloaded_file)
+    file_hash = calculate_file_hash(local_path)
     if file_hash_exists(file_hash):
-        app_logger.warning(f"Duplicate content hash for {video_id}. Rejecting.")
+        app_logger.warning(f"Duplicate content for {video_id}, skipping")
         try:
-            os.remove(downloaded_file)
+            os.remove(local_path)
         except Exception:
             pass
         return None
 
-    # Save to DB
-    success = add_video(
-        video_id=video_id,
-        creator=uploader,
-        caption=caption[:500],
-        duration=duration,
-        file_hash=file_hash,
-        local_path=downloaded_file,
-    )
+    if add_video(video_id=video_id, creator=uploader, caption=caption[:500],
+                 duration=duration, file_hash=file_hash, local_path=local_path):
+        app_logger.info(f"Queued: {video_id} by @{uploader} ({duration:.1f}s)")
+        return local_path
 
-    if success:
-        app_logger.info(f"Queued reel {video_id} by @{uploader} ({duration:.1f}s)")
-        return downloaded_file
-    else:
-        error_logger.error(f"DB insert failed for {video_id}")
-        return None
+    error_logger.error(f"DB insert failed for {video_id}")
+    return None
 
 
-def download_profile_reels(username: str, limit: int = 24, proxy: Optional[str] = None) -> List[str]:
+# ─────────────────────────────────────────────────────────────────────────────
+# Public API
+# ─────────────────────────────────────────────────────────────────────────────
+
+def download_profile_reels(username: str, limit: int = 24,
+                            proxy: Optional[str] = None) -> List[str]:
     """
-    Downloads the latest `limit` reels from an Instagram profile using yt-dlp.
-    Uses a two-step approach: first list URLs, then download each.
-    Returns list of local file paths added to the DB queue.
+    Download the latest `limit` reels from an Instagram profile.
+
+    Stage 1 – Instagram private mobile API → list of individual reel URLs
+    Stage 2 – yt-dlp → download each URL
     """
-    profile_url = f"https://www.instagram.com/{username}/reels/"
-    app_logger.info(f"Starting reel download for @{username} (limit={limit}) from {profile_url}")
+    app_logger.info(f"Starting reel download for @{username} (limit={limit})")
 
     cookies_path = _find_cookies_path()
-    downloaded_paths = []
-
-    # ── Step 1: Extract reel URLs from the profile (flat list, no download) ──
-    list_opts = {
-        "quiet": False,
-        "no_warnings": False,
-        "extract_flat": True,
-        "playlistend": limit,
-        "ignoreerrors": True,
-        "http_headers": {
-            "User-Agent": (
-                "Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) "
-                "AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 "
-                "Mobile/15E148 Safari/604.1"
-            ),
-        },
-    }
-    if cookies_path:
-        list_opts["cookiefile"] = cookies_path
-    if proxy:
-        list_opts["proxy"] = proxy
-
-    reel_urls = []
-    try:
-        with yt_dlp.YoutubeDL(list_opts) as ydl:
-            app_logger.info(f"Extracting reel list for @{username}...")
-            result = ydl.extract_info(profile_url, download=False)
-            if result:
-                entries = result.get("entries") or []
-                for entry in entries:
-                    if not entry:
-                        continue
-                    url = entry.get("url") or entry.get("webpage_url")
-                    vid_id = entry.get("id")
-                    if url:
-                        reel_urls.append((vid_id, url))
-                    elif vid_id:
-                        reel_urls.append((vid_id, f"https://www.instagram.com/reel/{vid_id}/"))
-                app_logger.info(f"Found {len(reel_urls)} reels for @{username}")
-            else:
-                error_logger.error(f"yt-dlp returned no result for @{username} profile page")
-    except yt_dlp.utils.DownloadError as e:
-        error_logger.error(f"yt-dlp DownloadError listing @{username}: {e}")
-    except Exception as e:
-        error_logger.error(f"Error listing reels for @{username}: {e}")
-
-    if not reel_urls:
-        # Fallback: try direct profile URL without /reels/
-        app_logger.info(f"Trying fallback URL for @{username}: profile root")
-        try:
-            with yt_dlp.YoutubeDL(list_opts) as ydl:
-                result = ydl.extract_info(f"https://www.instagram.com/{username}/", download=False)
-                if result:
-                    entries = result.get("entries") or []
-                    for entry in entries:
-                        if not entry:
-                            continue
-                        url = entry.get("url") or entry.get("webpage_url")
-                        vid_id = entry.get("id")
-                        if url:
-                            reel_urls.append((vid_id, url))
-                        elif vid_id:
-                            reel_urls.append((vid_id, f"https://www.instagram.com/reel/{vid_id}/"))
-                    app_logger.info(f"Fallback found {len(reel_urls)} entries for @{username}")
-        except Exception as e:
-            error_logger.error(f"Fallback also failed for @{username}: {e}")
-
-    if not reel_urls:
-        error_logger.error(f"Could not find any reels for @{username}. Check cookies and account status.")
+    if not cookies_path:
+        error_logger.error(
+            "No Instagram cookies found. "
+            "Add INSTAGRAM_COOKIES secret in GitHub → re-deploy."
+        )
         return []
 
-    # ── Step 2: Download each reel individually ──
-    dl_opts = {
-        "quiet": False,
-        "no_warnings": False,
-        "ignoreerrors": True,
-        "format": "bestvideo[ext=mp4]+bestaudio[ext=m4a]/best[ext=mp4]/mp4/best",
-        "merge_output_format": "mp4",
-        "retries": 5,
-        "fragment_retries": 5,
-        "http_headers": {
-            "User-Agent": (
-                "Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) "
-                "AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 "
-                "Mobile/15E148 Safari/604.1"
-            ),
-        },
-    }
-    if cookies_path:
-        dl_opts["cookiefile"] = cookies_path
-    if proxy:
-        dl_opts["proxy"] = proxy
+    cookies = _parse_cookies(cookies_path)
+    if not cookies.get("sessionid"):
+        error_logger.error("sessionid not found in cookies file. Re-export your cookies.")
+        return []
 
-    for vid_id, url in reel_urls[:limit]:
-        # Skip if already in DB
-        if vid_id and video_exists(vid_id):
-            app_logger.info(f"Reel {vid_id} already in DB, skipping.")
+    # ── Stage 1: get reel URLs via private API ──────────────────────────────
+    user_id = _get_user_id(username, cookies, proxy)
+    if not user_id:
+        error_logger.error(
+            f"Could not resolve user_id for @{username}. "
+            "Account may be private, suspended, or cookies expired."
+        )
+        return []
+
+    reel_pairs = _get_reels_from_api(user_id, username, cookies, limit, proxy)
+    if not reel_pairs:
+        app_logger.info(f"Clips API returned 0 results for @{username}, trying feed fallback")
+        reel_pairs = _get_reels_fallback_feed(user_id, username, cookies, limit, proxy)
+
+    if not reel_pairs:
+        error_logger.error(
+            f"Zero reels found via API for @{username}. "
+            "Account may have no public reels or cookies are invalid."
+        )
+        return []
+
+    # ── Stage 2: download each URL with yt-dlp ─────────────────────────────
+    opts = _ydl_opts(cookies_path, proxy)
+    downloaded: List[str] = []
+
+    for shortcode, reel_url in reel_pairs:
+        if video_exists(shortcode):
+            app_logger.info(f"Already in DB: {shortcode}")
             continue
 
-        out_template = str(DOWNLOADS_DIR / f"%(id)s.%(ext)s")
-        dl_opts["outtmpl"] = out_template
-
         try:
-            with yt_dlp.YoutubeDL(dl_opts) as ydl:
-                app_logger.info(f"Downloading reel: {url}")
-                info = ydl.extract_info(url, download=True)
+            with yt_dlp.YoutubeDL(opts) as ydl:
+                app_logger.info(f"Downloading: {reel_url}")
+                info = ydl.extract_info(reel_url, download=True)
                 if not info:
-                    app_logger.warning(f"No info returned for {url}")
+                    app_logger.warning(f"yt-dlp returned no info for {reel_url}")
                     continue
 
-                actual_id = info.get("id", vid_id)
+                vid_id = info.get("id", shortcode)
                 ext = info.get("ext", "mp4")
+                local_path = str(DOWNLOADS_DIR / f"{vid_id}.{ext}")
 
-                # Find the downloaded file
-                local_path = str(DOWNLOADS_DIR / f"{actual_id}.{ext}")
                 if not os.path.exists(local_path):
-                    # Scan for it
-                    candidates = list(DOWNLOADS_DIR.glob(f"{actual_id}.*"))
-                    candidates = [c for c in candidates if c.suffix in (".mp4", ".mkv", ".webm", ".mov")]
+                    candidates = [
+                        c for c in DOWNLOADS_DIR.glob(f"{vid_id}.*")
+                        if c.suffix in (".mp4", ".mkv", ".webm", ".mov")
+                    ]
                     if candidates:
                         local_path = str(candidates[0])
                     else:
-                        app_logger.warning(f"Could not find downloaded file for {actual_id}")
+                        app_logger.warning(f"Downloaded file not found for {vid_id}")
                         continue
 
-                saved = _save_entry_to_db(info, local_path)
+                saved = _save_to_db(info, local_path)
                 if saved:
-                    downloaded_paths.append(saved)
+                    downloaded.append(saved)
 
         except yt_dlp.utils.DownloadError as e:
-            error_logger.error(f"DownloadError for {url}: {e}")
+            error_logger.error(f"yt-dlp DownloadError for {reel_url}: {e}")
         except Exception as e:
-            error_logger.error(f"Error downloading {url}: {e}")
+            error_logger.error(f"Unexpected error for {reel_url}: {e}")
 
-    app_logger.info(f"Finished @{username}: {len(downloaded_paths)}/{len(reel_urls)} reels queued.")
-    return downloaded_paths
+    app_logger.info(
+        f"Finished @{username}: {len(downloaded)}/{len(reel_pairs)} reels queued"
+    )
+    return downloaded
 
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Scheduler watcher class
+# ─────────────────────────────────────────────────────────────────────────────
 
 class InstagramWatcher:
-    """Monitors Instagram accounts using yt-dlp (replaces blocked instaloader)."""
-
-    def __init__(self):
-        pass
+    """Periodic watcher — called by APScheduler every N minutes."""
 
     def authenticate(self) -> bool:
         return True
 
-    def check_new_reels(self, max_posts_per_profile: int = 24, proxy: Optional[str] = None) -> List[str]:
-        """Scans all active accounts for new reels using yt-dlp."""
+    def check_new_reels(self, max_posts_per_profile: int = 24,
+                        proxy: Optional[str] = None) -> List[str]:
         accounts = get_active_accounts()
         if not accounts:
             app_logger.info("No active Instagram accounts to watch.")
             return []
 
-        all_downloaded = []
+        all_downloaded: List[str] = []
         for account in accounts:
-            app_logger.info(f"Scanning @{account} via yt-dlp...")
+            app_logger.info(f"Scanning Instagram account via yt-dlp: @{account}")
             try:
-                paths = download_profile_reels(account, limit=max_posts_per_profile, proxy=proxy)
+                paths = download_profile_reels(account, limit=max_posts_per_profile,
+                                               proxy=proxy)
                 all_downloaded.extend(paths)
                 update_account_checked(account)
             except Exception as e:
