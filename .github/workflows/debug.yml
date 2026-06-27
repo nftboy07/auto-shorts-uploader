@@ -21,19 +21,102 @@ jobs:
           key: ${{ secrets.VPS_SSH_KEY }}
           port: ${{ secrets.VPS_SSH_PORT || '22' }}
           script: |
+            cd /opt/instagram-youtube-shorts-agent || true
+            
+            echo "=== WRITING AND RUNNING HTML SCRAPER TEST ==="
+            cat << 'HTMLTESTEOF' > vps_test_html.py
+            import os
+            import re
+            import urllib.request
+            import urllib.parse
+            import json
+
+            def test_html():
+                cookies_path = "config/instagram_cookies.txt"
+                if not os.path.exists(cookies_path):
+                    print("Cookies file not found at", cookies_path)
+                    return
+                    
+                cookies = {}
+                with open(cookies_path, "r", encoding="utf-8") as f:
+                    for line in f:
+                        line = line.strip()
+                        if not line or line.startswith("#"):
+                            continue
+                        parts = line.split("\t")
+                        if len(parts) < 7:
+                            parts = re.split(r'\s+', line)
+                        if len(parts) >= 7 and ("instagram.com" in parts[0] or parts[0] == ""):
+                            cookies[parts[5]] = parts[6]
+                            
+                cookie_str = "; ".join(f"{k}={v}" for k, v in cookies.items())
+                print(f"Loaded {len(cookies)} cookies. sessionid present: {'sessionid' in cookies}")
+                if 'sessionid' in cookies:
+                    print("sessionid prefix:", cookies['sessionid'][:10] + "...")
+                
+                username = "noryx.amv"
+                url = f"https://www.instagram.com/{username}/"
+                headers = {
+                    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+                    "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8",
+                    "Cookie": cookie_str,
+                }
+                
+                req = urllib.request.Request(url, headers=headers)
+                
+                # Try with proxy
+                proxy = "http://127.0.0.1:1081"
+                proxy_handler = urllib.request.ProxyHandler({"http": proxy, "https": proxy})
+                opener = urllib.request.build_opener(proxy_handler)
+                
+                try:
+                    print("Fetching profile page...")
+                    with opener.open(req, timeout=15) as resp:
+                        html = resp.read().decode("utf-8", errors="ignore")
+                        print("HTML Length:", len(html))
+                        print("HTTP Status:", resp.status)
+                        
+                        # Check for common error keywords
+                        for kw in ["login", "rate limit", "block", "checkpoint", "robot"]:
+                            if kw in html.lower():
+                                print(f"Found keyword '{kw}' in HTML!")
+                        
+                        # Print the title tag
+                        title = re.search(r"<title>(.*?)</title>", html, re.IGNORECASE)
+                        if title:
+                            print("Title tag:", title.group(1))
+                            
+                        # Search for potential user ID occurrences
+                        print("Searching for digit patterns...")
+                        uids = re.findall(r'"user_id":"([0-9]+)"', html)
+                        print("user_id occurrences:", list(set(uids))[:5])
+                        
+                        uids2 = re.findall(r'"id":"([0-9]+)"', html)
+                        print("id occurrences:", list(set(uids2))[:10])
+                        
+                        uids3 = re.findall(r'profilePage_([0-9]+)', html)
+                        print("profilePage_ occurrences:", list(set(uids3))[:5])
+                        
+                        uids4 = re.findall(r'instapp:owner_id"\s+content="([0-9]+)"', html)
+                        print("instapp:owner_id occurrences:", uids4)
+                        
+                        # Save snippet of HTML to inspect
+                        with open("logs/profile_snippet.html", "w", encoding="utf-8") as out:
+                            out.write(html[:100000])
+                        print("Wrote first 100k of HTML to logs/profile_snippet.html")
+                        
+                except Exception as e:
+                    print("Request failed:", e)
+
+            if __name__ == '__main__':
+                test_html()
+            HTMLTESTEOF
+            
+            python3 vps_test_html.py || true
+            rm vps_test_html.py || true
+            
             echo "=== VPS CONTAINER STATUS ==="
             docker ps -a || true
             
             echo "=== DOCKER COMPOSE LOGS ==="
-            cd /opt/instagram-youtube-shorts-agent
-            docker compose logs --tail=150 || true
-            
-            echo "=== BOT APP LOGS ==="
-            cat logs/app.log | tail -n 120 || true
-            
-            echo "=== BOT ERROR LOGS ==="
-            cat logs/error.log | tail -n 120 || true
-            
-            echo "=== DATABASE CHECKS ==="
-            sqlite3 database/shortsbot.db "SELECT * FROM accounts;" || true
-            sqlite3 database/shortsbot.db "SELECT status, COUNT(*) FROM videos GROUP BY status;" || true
+            docker compose logs --tail=100 || true
