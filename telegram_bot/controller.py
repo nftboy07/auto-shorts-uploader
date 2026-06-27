@@ -22,9 +22,9 @@ from .commands import (
     update_cmd,
     shell_cmd,
     system_info_cmd,
-    upload_link_handler,
     login_ig_cmd,
-    two_factor_cmd
+    two_factor_cmd,
+    scan_cmd
 )
 
 # Global bot application instance
@@ -74,6 +74,7 @@ def setup_bot() -> ApplicationBuilder:
     # Instagram interactive login
     app.add_handler(CommandHandler("login_ig", login_ig_cmd))
     app.add_handler(CommandHandler("2fa", two_factor_cmd))
+    app.add_handler(CommandHandler("scan", scan_cmd))
     
     app_logger.info("Telegram Bot handlers registered successfully.")
     return app

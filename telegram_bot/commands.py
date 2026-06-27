@@ -60,6 +60,7 @@ async def start_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         "📜 `/history` - View action history\n\n"
         "⚙️ **Uploader Control**\n"
         "⚡ `/upload_now` - Upload next in queue immediately\n"
+        "🔍 `/scan` - Scan monitored IG accounts for new reels\n"
         "⏸ `/pause` - Pause the scheduler\n"
         "▶ `/resume` - Resume the scheduler\n"
         "⚡ `/upload_url <instagram_url>` - Upload specific Reel now\n\n"
@@ -67,6 +68,9 @@ async def start_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         "👤 `/accounts` - Monitor list\n"
         "➕ `/add_account <username>` - Add IG profile\n"
         "➖ `/remove_account <username>` - Remove IG profile\n\n"
+        "🔑 **Instagram Auth**\n"
+        "🔑 `/login_ig` - Login to Instagram from VPS\n"
+        "🔑 `/2fa <code>` - Submit 2FA code\n\n"
         "🌐 **Proxy Management**\n"
         "🌐 `/proxies` - Registered proxies\n"
         "➕ `/add_proxy <proxy_url>` - Add a proxy URL\n"
@@ -615,4 +619,13 @@ async def two_factor_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
     except Exception as e:
         error_logger.error(f"2FA verification failed: {e}")
         await update.message.reply_text(f"❌ 2FA verification failed: {e}")
+
+
+@admin_only
+async def scan_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Manually triggers a scan of monitored Instagram accounts."""
+    await update.message.reply_text("⏳ Initiating scan for monitored Instagram accounts in the background. Check `/logs` or `/queue` in a few minutes.")
+    from scheduler.jobs import scan_instagram_job
+    asyncio.create_task(scan_instagram_job())
+
 
