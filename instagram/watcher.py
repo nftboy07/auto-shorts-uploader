@@ -82,42 +82,66 @@ def _parse_cookies(cookies_path: str) -> Dict[str, str]:
                         value = value[1:-1]
                     cookies[name] = value
     except Exception as e:
-        error_logger.error(f"Failed to parse cookies from {cookies_path}: {e}")
-    
-    app_logger.info(f"Parsed {len(cookies)} cookies from {cookies_path}")
+        app_logger.warning(f"Error parsing cookies at {cookies_path}: {e}")
     return cookies
 
 
-
-def _cookie_header(cookies: Dict[str, str]) -> str:
-    """Build Cookie: header string from dict."""
-    return "; ".join(f"{k}={v}" for k, v in cookies.items())
+def _get_opener(cookies_path: str, proxy: Optional[str] = None) -> urllib.request.OpenerDirector:
+    """Builds a urllib opener preconfigured with MozillaCookieJar and optional proxy."""
+    cookie_jar = http.cookiejar.MozillaCookieJar()
+    if os.path.exists(cookies_path):
+        try:
+            # Fix cookie file formatting in memory before loading
+            with open(cookies_path, 'r', encoding='utf-8') as f:
+                content = f.read()
+            lines = content.splitlines()
+            fixed_lines = []
+            for line in lines:
+                if not line.strip() or line.startswith("#"):
+                    fixed_lines.append(line)
+                    continue
+                parts = line.split("\t")
+                if len(parts) < 7:
+                    parts = re.split(r'\s+', line)
+                if len(parts) >= 7:
+                    fixed_lines.append("\t".join(parts[:7]))
+            
+            temp_path = str(Path(cookies_path).parent / "temp_watcher_cookies.txt")
+            with open(temp_path, "w", encoding="utf-8") as f_temp:
+                f_temp.write("\n".join(fixed_lines))
+                
+            cookie_jar.load(temp_path, ignore_discard=True, ignore_expires=True)
+            try: os.remove(temp_path)
+            except Exception: pass
+        except Exception as e:
+            app_logger.warning(f"Failed to load cookies into jar: {e}")
+            
+    cookie_handler = urllib.request.HTTPCookieProcessor(cookie_jar)
+    if proxy:
+        proxy_handler = urllib.request.ProxyHandler({"http": proxy, "https": proxy})
+        opener = urllib.request.build_opener(proxy_handler, cookie_handler)
+    else:
+        opener = urllib.request.build_opener(cookie_handler)
+        
+    return opener
 
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Instagram private API — get user ID + reel list
 # ─────────────────────────────────────────────────────────────────────────────
 
-def _api_request(url: str, cookies: Dict[str, str], proxy: Optional[str] = None) -> Optional[dict]:
+def _api_request(url: str, cookies_path: str, proxy: Optional[str] = None) -> Optional[dict]:
     """Make an authenticated request to the Instagram private API."""
-    headers = {
-        "User-Agent": IG_USER_AGENT,
-        "X-IG-App-ID": IG_APP_ID,
-        "X-IG-Capabilities": "3brTvw==",
-        "X-IG-Connection-Type": "WIFI",
-        "Accept-Language": "en-US",
-        "Cookie": _cookie_header(cookies),
-    }
-    req = urllib.request.Request(url, headers=headers)
-
-    if proxy:
-        proxy_handler = urllib.request.ProxyHandler({"http": proxy, "https": proxy})
-        opener = urllib.request.build_opener(proxy_handler)
-    else:
-        opener = urllib.request.build_opener()
-
+    opener = _get_opener(cookies_path, proxy)
+    opener.addheaders = [
+        ("User-Agent", IG_USER_AGENT),
+        ("X-IG-App-ID", IG_APP_ID),
+        ("X-IG-Capabilities", "3brTvw=="),
+        ("X-IG-Connection-Type", "WIFI"),
+        ("Accept-Language", "en-US"),
+    ]
     try:
-        with opener.open(req, timeout=15) as resp:
+        with opener.open(url, timeout=15) as resp:
             data = json.loads(resp.read().decode("utf-8"))
             return data
     except urllib.error.HTTPError as e:
@@ -127,25 +151,24 @@ def _api_request(url: str, cookies: Dict[str, str], proxy: Optional[str] = None)
     return None
 
 
-def _resolve_user_id_from_html(username: str, cookies: Dict[str, str], proxy: Optional[str] = None) -> Optional[str]:
+def _resolve_user_id_from_html(username: str, cookies_path: str, proxy: Optional[str] = None) -> Optional[str]:
     """Resolve user ID by parsing the profile page HTML directly (less rate-limited)."""
     url = f"https://www.instagram.com/{username}/"
-    headers = {
-        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8",
-        "Accept-Language": "en-US,en;q=0.9",
-        "Cookie": _cookie_header(cookies),
-    }
-    
-    req = urllib.request.Request(url, headers=headers)
-    if proxy:
-        proxy_handler = urllib.request.ProxyHandler({"http": proxy, "https": proxy})
-        opener = urllib.request.build_opener(proxy_handler)
-    else:
-        opener = urllib.request.build_opener()
+    opener = _get_opener(cookies_path, proxy)
+    opener.addheaders = [
+        ("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"),
+        ("Accept", "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8"),
+        ("Accept-Language", "en-US,en;q=0.9"),
+    ]
         
     try:
-        with opener.open(req, timeout=15) as resp:
+        with opener.open(url, timeout=15) as resp:
+            final_url = resp.geturl()
+            # If redirected to root or accounts/login page, session is blocked or invalid
+            if "/login/" in final_url or final_url == "https://www.instagram.com/":
+                app_logger.warning(f"HTML profile resolution failed: redirected to {final_url} (cookies invalid or rate-limited)")
+                return None
+                
             html = resp.read().decode("utf-8", errors="ignore")
             
             # Pattern 1: instapp:owner_id
@@ -177,12 +200,12 @@ def _resolve_user_id_from_html(username: str, cookies: Dict[str, str], proxy: Op
     return None
 
 
-def _get_user_id(username: str, cookies: Dict[str, str], proxy: Optional[str] = None) -> Optional[str]:
+def _get_user_id(username: str, cookies_path: str, proxy: Optional[str] = None) -> Optional[str]:
     """Resolve Instagram username → numeric user ID using multiple fallbacks."""
     # Method 1: True mobile API endpoint (most reliable with mobile app headers)
     url_mobile = f"{IG_API_BASE}/users/{username}/usernameinfo/"
     app_logger.info(f"Resolving @{username} via mobile API...")
-    data = _api_request(url_mobile, cookies, proxy)
+    data = _api_request(url_mobile, cookies_path, proxy)
     if data:
         try:
             user_id = data.get("user", {}).get("pk")
@@ -194,7 +217,7 @@ def _get_user_id(username: str, cookies: Dict[str, str], proxy: Optional[str] = 
 
     # Method 2: Parse profile page HTML directly (very lenient, standard browser UA)
     app_logger.info(f"Resolving @{username} via HTML profile page...")
-    user_id_html = _resolve_user_id_from_html(username, cookies, proxy)
+    user_id_html = _resolve_user_id_from_html(username, cookies_path, proxy)
     if user_id_html:
         return user_id_html
 
@@ -202,21 +225,14 @@ def _get_user_id(username: str, cookies: Dict[str, str], proxy: Optional[str] = 
     url_web = f"{IG_API_BASE}/users/web_profile_info/?username={username}"
     app_logger.info(f"Resolving @{username} via web API fallback...")
     
-    headers_web = {
-        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-        "X-IG-App-ID": "936619743392459",
-        "Cookie": _cookie_header(cookies),
-    }
-    
-    req = urllib.request.Request(url_web, headers=headers_web)
-    if proxy:
-        proxy_handler = urllib.request.ProxyHandler({"http": proxy, "https": proxy})
-        opener = urllib.request.build_opener(proxy_handler)
-    else:
-        opener = urllib.request.build_opener()
+    opener = _get_opener(cookies_path, proxy)
+    opener.addheaders = [
+        ("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"),
+        ("X-IG-App-ID", "936619743392459"),
+    ]
         
     try:
-        with opener.open(req, timeout=15) as resp:
+        with opener.open(url_web, timeout=15) as resp:
             web_data = json.loads(resp.read().decode("utf-8"))
             user_id = web_data["data"]["user"]["id"]
             app_logger.info(f"Resolved @{username} via web API fallback → user_id={user_id}")
@@ -227,8 +243,7 @@ def _get_user_id(username: str, cookies: Dict[str, str], proxy: Optional[str] = 
     return None
 
 
-
-def _get_reels_from_api(user_id: str, username: str, cookies: Dict[str, str],
+def _get_reels_from_api(user_id: str, username: str, cookies_path: str,
                          limit: int = 24, proxy: Optional[str] = None) -> List[Tuple[str, str]]:
     """
     Fetch reel shortcodes from Instagram API.
@@ -242,7 +257,7 @@ def _get_reels_from_api(user_id: str, username: str, cookies: Dict[str, str],
         if max_id:
             url += f"&max_id={max_id}"
 
-        data = _api_request(url, cookies, proxy)
+        data = _api_request(url, cookies_path, proxy)
         if not data:
             break
 
@@ -279,12 +294,12 @@ def _get_reels_from_api(user_id: str, username: str, cookies: Dict[str, str],
     return results[:limit]
 
 
-def _get_reels_fallback_feed(user_id: str, username: str, cookies: Dict[str, str],
+def _get_reels_fallback_feed(user_id: str, username: str, cookies_path: str,
                                limit: int = 24, proxy: Optional[str] = None) -> List[Tuple[str, str]]:
     """Fallback: use user feed API to find video posts."""
     results: List[Tuple[str, str]] = []
     url = f"{IG_API_BASE}/feed/user/{user_id}/?count={limit}"
-    data = _api_request(url, cookies, proxy)
+    data = _api_request(url, cookies_path, proxy)
     if not data:
         return results
     for item in data.get("items", []):
@@ -415,13 +430,8 @@ def download_profile_reels(username: str, limit: int = 24,
         )
         return []
 
-    cookies = _parse_cookies(cookies_path)
-    if not cookies.get("sessionid"):
-        error_logger.error("sessionid not found in cookies file. Re-export your cookies.")
-        return []
-
     # ── Stage 1: get reel URLs via private API ──────────────────────────────
-    user_id = _get_user_id(username, cookies, proxy)
+    user_id = _get_user_id(username, cookies_path, proxy)
     if not user_id:
         error_logger.error(
             f"Could not resolve user_id for @{username}. "
@@ -429,10 +439,10 @@ def download_profile_reels(username: str, limit: int = 24,
         )
         return []
 
-    reel_pairs = _get_reels_from_api(user_id, username, cookies, limit, proxy)
+    reel_pairs = _get_reels_from_api(user_id, username, cookies_path, limit, proxy)
     if not reel_pairs:
         app_logger.info(f"Clips API returned 0 results for @{username}, trying feed fallback")
-        reel_pairs = _get_reels_fallback_feed(user_id, username, cookies, limit, proxy)
+        reel_pairs = _get_reels_fallback_feed(user_id, username, cookies_path, limit, proxy)
 
     if not reel_pairs:
         error_logger.error(
