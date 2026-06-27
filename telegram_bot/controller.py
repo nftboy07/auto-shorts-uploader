@@ -22,6 +22,7 @@ from .commands import (
     update_cmd,
     shell_cmd,
     system_info_cmd,
+    upload_link_handler,
     login_ig_cmd,
     two_factor_cmd,
     scan_cmd
