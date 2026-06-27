@@ -23,17 +23,11 @@ jobs:
           script: |
             cd /opt/instagram-youtube-shorts-agent || true
             
-            echo "=== WRITING AND RUNNING INSTALOADER LOGIN TEST VIA DOCKER CP ==="
-            cat << 'LOGINEOF' > vps_test_login.py
-            import os
+            echo "=== RUNNING INSTALOADER ANONYMOUS PROFILE TEST ==="
+            cat << 'ANONEOF' > vps_test_anon.py
             import instaloader
             
-            username = os.environ.get("INSTAGRAM_USERNAME", "rashaaeeyyy")
-            password = os.environ.get("INSTAGRAM_PASSWORD", "ILOVEeng10@")
-            
-            print(f"Username from env: {username}")
-            print(f"Password from env length: {len(password) if password else 0}")
-            
+            username = "noryx.amv"
             loader = instaloader.Instaloader(
                 download_pictures=False,
                 download_videos=False,
@@ -44,29 +38,27 @@ jobs:
             )
             
             try:
-                print("Attempting login...")
-                loader.login(username, password)
-                print("SUCCESS: Logged in successfully!")
-                
-                # Print cookies
-                session = loader.context._session
-                print("Session cookies:")
-                for c in session.cookies:
-                    print(f"  {c.name}: {c.value[:10]}...")
-            except instaloader.TwoFactorAuthRequiredException:
-                print("FAILED: 2FA Required!")
+                print(f"Fetching profile {username} anonymously...")
+                profile = instaloader.Profile.from_username(loader.context, username)
+                print(f"Profile User ID: {profile.userid}")
+                print(f"Is Private: {profile.is_private}")
+                print("Latest posts:")
+                count = 0
+                for post in profile.get_posts():
+                    print(f"  Post {post.shortcode}: is_video={post.is_video}, url={post.video_url if post.is_video else 'None'}")
+                    count += 1
+                    if count >= 5:
+                        break
             except Exception as e:
-                print(f"FAILED: Login failed: {e}")
-            LOGINEOF
+                print(f"Failed anonymously: {e}")
+            ANONEOF
             
-            # Copy to container
             CONTAINER_ID=$(docker ps -q -f name=shortsbot-agent)
-            echo "Container ID: $CONTAINER_ID"
-            docker cp vps_test_login.py $CONTAINER_ID:/app/vps_test_login.py || true
+            docker cp vps_test_anon.py $CONTAINER_ID:/app/vps_test_anon.py || true
             
             # Run inside container
-            docker compose exec -T shortsbot python /app/vps_test_login.py || true
+            docker compose exec -T shortsbot python /app/vps_test_anon.py || true
             
             # Clean up
-            docker compose exec -T shortsbot rm /app/vps_test_login.py || true
-            rm vps_test_login.py || true
+            docker compose exec -T shortsbot rm /app/vps_test_anon.py || true
+            rm vps_test_anon.py || true
