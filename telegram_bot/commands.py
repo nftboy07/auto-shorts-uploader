@@ -499,3 +499,120 @@ async def upload_link_handler(update: Update, context: ContextTypes.DEFAULT_TYPE
         await update.message.reply_text(f"🎉 Success! Uploaded to YouTube Shorts: https://youtu.be/{youtube_id}")
     else:
         await update.message.reply_text("❌ Upload failed. Please check `/logs` for details.")
+
+
+# --- Instagram Interactive Login & 2FA ---
+
+def _save_netscape_cookies(cookie_jar, filepath):
+    """Saves a standard requests/urllib CookieJar to a Netscape formatted file."""
+    with open(filepath, "w", encoding="utf-8") as f:
+        f.write("# Netscape HTTP Cookie File\n")
+        f.write("# https://curl.haxx.se/rfc/cookie_spec.html\n")
+        f.write("# This is a generated file! Do not edit.\n\n")
+        for cookie in cookie_jar:
+            domain = cookie.domain
+            initial_dot = "TRUE" if domain.startswith(".") else "FALSE"
+            path = cookie.path
+            secure = "TRUE" if cookie.secure else "FALSE"
+            expires = str(cookie.expires) if cookie.expires else "0"
+            name = cookie.name
+            value = cookie.value
+            f.write(f"{domain}\t{initial_dot}\t{path}\t{secure}\t{expires}\t{name}\t{value}\n")
+
+@admin_only
+async def login_ig_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Attempts to log in to Instagram using the configured credentials."""
+    import instaloader
+    
+    username = secrets.INSTAGRAM_USERNAME
+    password = secrets.INSTAGRAM_PASSWORD
+    
+    if not username or not password:
+        await update.message.reply_text("❌ Error: INSTAGRAM_USERNAME or INSTAGRAM_PASSWORD is not configured in the environment.")
+        return
+        
+    await update.message.reply_text(f"⏳ Attempting Instagram login for @{username}...")
+    
+    loader = instaloader.Instaloader(
+        download_pictures=False,
+        download_videos=False,
+        download_video_thumbnails=False,
+        download_geotags=False,
+        download_comments=False,
+        save_metadata=False
+    )
+    
+    try:
+        # Perform login in a separate thread
+        await asyncio.to_thread(loader.login, username, password)
+        
+        # Save session file
+        session_file = BASE_DIR / "config" / f"session_{username}"
+        loader.save_session_to_file(filename=str(session_file))
+        
+        # Extract cookies and save to cookies.txt
+        cookies_path = BASE_DIR / "config" / "instagram_cookies.txt"
+        session_cookies = loader.context._session.cookies
+        _save_netscape_cookies(session_cookies, cookies_path)
+        
+        await update.message.reply_text("✅ Success! Instagram login completed and cookies refreshed.")
+        
+    except instaloader.TwoFactorAuthRequiredException:
+        context.user_data["ig_login"] = {
+            "username": username,
+            "loader": loader
+        }
+        await update.message.reply_text(
+            "🔑 **2FA Code Required!**\n\n"
+            "An authentication code has been sent to your device.\n"
+            "Please reply with your code using:\n"
+            "`/2fa <code>`",
+            parse_mode="Markdown"
+        )
+    except Exception as e:
+        error_logger.error(f"Telegram IG login failed: {e}")
+        await update.message.reply_text(f"❌ Login failed: {e}")
+
+
+@admin_only
+async def two_factor_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Submits the 2FA code to complete Instagram login."""
+    import instaloader
+    
+    login_data = context.user_data.get("ig_login")
+    if not login_data:
+        await update.message.reply_text("❌ Error: No Instagram login session is currently active. Run `/login_ig` first.")
+        return
+        
+    if not context.args:
+        await update.message.reply_text("Usage: `/2fa <code>`")
+        return
+        
+    code = context.args[0].strip()
+    username = login_data["username"]
+    loader = login_data["loader"]
+    
+    await update.message.reply_text("⏳ Verifying 2FA code...")
+    
+    try:
+        # Perform 2FA login in a separate thread
+        await asyncio.to_thread(loader.two_factor_login, code)
+        
+        # Save session file
+        session_file = BASE_DIR / "config" / f"session_{username}"
+        loader.save_session_to_file(filename=str(session_file))
+        
+        # Extract cookies and save to cookies.txt
+        cookies_path = BASE_DIR / "config" / "instagram_cookies.txt"
+        session_cookies = loader.context._session.cookies
+        _save_netscape_cookies(session_cookies, cookies_path)
+        
+        # Clear login session data
+        context.user_data.pop("ig_login", None)
+        
+        await update.message.reply_text("✅ Success! 2FA verification complete. Instagram session cookies refreshed.")
+        
+    except Exception as e:
+        error_logger.error(f"2FA verification failed: {e}")
+        await update.message.reply_text(f"❌ 2FA verification failed: {e}")
+
