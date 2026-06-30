@@ -23,8 +23,47 @@ jobs:
           script: |
             cd /opt/instagram-youtube-shorts-agent || true
             
-            echo "=== VPS CONTAINER STATUS ==="
-            docker ps -a || true
+            echo "=== WRITING YT-DLP PROFILE TEST SCRIPT ==="
+            cat << 'EOF' > config/test_ytdl_profile.py
+            import yt_dlp
+            import json
+
+            def test_ytdl_profile():
+                username = "noryx.amv"
+                url = f"https://www.instagram.com/{username}/"
+                
+                ydl_opts = {
+                    'extract_flat': True,
+                    'quiet': True,
+                    'no_warnings': True,
+                    'proxy': 'http://xray:1081',
+                }
+                
+                print(f"Extracting flat profile from {url} with proxy...")
+                try:
+                    with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+                        info = ydl.extract_info(url, download=False)
+                        if not info:
+                            print("No info extracted")
+                            return
+                        print("Type:", info.get('_type'))
+                        print("Title:", info.get('title'))
+                        entries = info.get('entries', [])
+                        print("Entries count:", len(entries))
+                        if entries:
+                            print("First 3 entries:")
+                            for i, entry in enumerate(entries[:3]):
+                                print(f"Entry {i}:")
+                                print(json.dumps(entry, indent=2))
+                except Exception as e:
+                    print("Profile extraction failed:", e)
+
+            if __name__ == "__main__":
+                test_ytdl_profile()
+            EOF
             
-            echo "=== LAST 500 LINES OF APP.LOG ==="
-            tail -n 500 logs/app.log || true
+            echo "=== RUNNING YT-DLP PROFILE SCRIPT INSIDE CONTAINER ==="
+            docker exec shortsbot-agent python /app/config/test_ytdl_profile.py || true
+            
+            echo "=== CLEANING UP YT-DLP PROFILE SCRIPT ==="
+            rm -f config/test_ytdl_profile.py || true
