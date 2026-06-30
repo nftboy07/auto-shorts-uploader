@@ -25,7 +25,9 @@ from .commands import (
     upload_link_handler,
     login_ig_cmd,
     two_factor_cmd,
-    scan_cmd
+    scan_cmd,
+    cookies_help_cmd,
+    cookie_document_handler
 )
 
 # Global bot application instance
@@ -76,6 +78,8 @@ def setup_bot() -> ApplicationBuilder:
     app.add_handler(CommandHandler("login_ig", login_ig_cmd))
     app.add_handler(CommandHandler("2fa", two_factor_cmd))
     app.add_handler(CommandHandler("scan", scan_cmd))
+    app.add_handler(CommandHandler("cookies_help", cookies_help_cmd))
+    app.add_handler(MessageHandler(filters.Document.ALL, cookie_document_handler))
     
     app_logger.info("Telegram Bot handlers registered successfully.")
     return app

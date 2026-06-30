@@ -70,7 +70,8 @@ async def start_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         "➖ `/remove_account <username>` - Remove IG profile\n\n"
         "🔑 **Instagram Auth**\n"
         "🔑 `/login_ig` - Login to Instagram from VPS\n"
-        "🔑 `/2fa <code>` - Submit 2FA code\n\n"
+        "🔑 `/2fa <code>` - Submit 2FA code\n"
+        "🍪 `/cookies_help` - Help uploading browser cookies\n\n"
         "🌐 **Proxy Management**\n"
         "🌐 `/proxies` - Registered proxies\n"
         "➕ `/add_proxy <proxy_url>` - Add a proxy URL\n"
@@ -627,5 +628,72 @@ async def scan_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     await update.message.reply_text("⏳ Initiating scan for monitored Instagram accounts in the background. Check `/logs` or `/queue` in a few minutes.")
     from scheduler.jobs import scan_instagram_job
     asyncio.create_task(scan_instagram_job())
+
+
+@admin_only
+async def cookies_help_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Explains how to export and upload cookies."""
+    msg = (
+        "🍪 **How to Upload Instagram Cookies**\n\n"
+        "To bypass Instagram's security checks, you can export session cookies from your browser and upload them to the bot:\n\n"
+        "1️⃣ **Log in to Instagram** on your computer's browser (Chrome, Firefox, Edge).\n"
+        "2️⃣ Install a cookie export extension, such as **Get cookies.txt LOCALLY** (Chrome Web Store / Firefox Addons).\n"
+        "3️⃣ Open the extension while on Instagram, click **Export**, and save the file (e.g., `instagram-cookies.txt`).\n"
+        "4️⃣ **Upload the text file** directly to this chat.\n\n"
+        "The bot will automatically validate and overwrite the active cookies, then start a scan!"
+    )
+    await update.message.reply_text(msg, parse_mode="Markdown")
+
+
+@admin_only
+async def cookie_document_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Handles incoming cookies.txt document files."""
+    document = update.message.document
+    if not document:
+        return
+        
+    filename = document.file_name.lower()
+    if not filename.endswith(".txt"):
+        await update.message.reply_text("❌ Please upload a Netscape format `.txt` cookies file.")
+        return
+        
+    await update.message.reply_text("⏳ Downloading and validating cookies file...")
+    
+    try:
+        # Download the file to a temp location
+        new_file = await context.bot.get_file(document.file_id)
+        temp_path = BASE_DIR / "config" / "temp_cookies_upload.txt"
+        await new_file.download_to_drive(str(temp_path))
+        
+        # Read and validate
+        with open(temp_path, "r", encoding="utf-8", errors="ignore") as f:
+            content = f.read()
+            
+        if "instagram.com" not in content:
+            if os.path.exists(temp_path):
+                os.remove(temp_path)
+            await update.message.reply_text(
+                "❌ Invalid file: Could not find `instagram.com` cookies in the file.\n"
+                "Please make sure you are logged in to Instagram on your browser when exporting."
+            )
+            return
+            
+        # Overwrite the real cookies file
+        cookies_path = BASE_DIR / "config" / "instagram_cookies.txt"
+        if os.path.exists(cookies_path):
+            os.remove(cookies_path)
+        os.rename(temp_path, cookies_path)
+        
+        await update.message.reply_text("✅ Success! Instagram cookies saved to `config/instagram_cookies.txt`.")
+        
+        # Manually trigger a scan
+        from scheduler.jobs import scan_instagram_job
+        await update.message.reply_text("⏳ Triggering an Instagram scan with the new cookies...")
+        asyncio.create_task(scan_instagram_job())
+        
+    except Exception as e:
+        error_logger.error(f"Failed to process uploaded cookies: {e}", exc_info=True)
+        await update.message.reply_text(f"❌ Failed to process cookies: {e}")
+
 
 
