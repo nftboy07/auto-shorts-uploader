@@ -23,8 +23,98 @@ jobs:
           script: |
             cd /opt/instagram-youtube-shorts-agent || true
             
-            echo "=== VPS CONFIG DIRECTORY LISTING ==="
-            ls -la config || true
+            echo "=== WRITING PARSE DIAGNOSTIC SCRIPT ==="
+            cat << 'EOF' > config/test_parse.py
+            import os
+            import re
+            import urllib.request
+            import urllib.parse
+            import json
+            import http.cookiejar
+
+            def test_parse():
+                cookies_path = "/app/config/instagram_cookies.txt"
+                if not os.path.exists(cookies_path):
+                    print("Cookies file not found")
+                    return
+                    
+                # Load cookies
+                cookies = {}
+                with open(cookies_path, "r", encoding="utf-8") as f:
+                    for line in f:
+                        line = line.strip()
+                        if not line or line.startswith("#"):
+                            continue
+                        parts = line.split("\t")
+                        if len(parts) < 7:
+                            parts = re.split(r'\s+', line)
+                        if len(parts) >= 7 and ("instagram.com" in parts[0] or parts[0] == ""):
+                            cookies[parts[5]] = parts[6]
+                            
+                cookie_str = "; ".join(f"{k}={v}" for k, v in cookies.items())
+                
+                # Fetch page
+                proxy = "http://xray:1081"
+                proxy_handler = urllib.request.ProxyHandler({"http": proxy, "https": proxy})
+                opener = urllib.request.build_opener(proxy_handler)
+                
+                url = "https://www.instagram.com/noryx.amv/"
+                headers = {
+                    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+                    "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8",
+                    "Accept-Language": "en-US,en;q=0.9",
+                    "Cookie": cookie_str,
+                }
+                
+                req = urllib.request.Request(url, headers=headers)
+                try:
+                    with opener.open(req, timeout=15) as resp:
+                        html = resp.read().decode("utf-8", errors="ignore")
+                        print("HTML Length:", len(html))
+                        print("Response Code:", resp.status)
+                        
+                        # Find title
+                        title = re.search(r"<title>(.*?)</title>", html, re.IGNORECASE)
+                        if title:
+                            print("Title:", title.group(1))
+                            
+                        # Search for user_id/id pattern
+                        uids = re.findall(r'"user_id":"([0-9]+)"', html)
+                        print("user_id occurrences:", list(set(uids))[:5])
+                        
+                        uids2 = re.findall(r'"id":"([0-9]+)"', html)
+                        print("id occurrences:", list(set(uids2))[:10])
+                        
+                        # Search for user ID of profile owner specifically
+                        # In sharedData, it is typically: "profilePage_([0-9]+)" or inside a JSON object: {"username":"noryx.amv","id":"..."}
+                        # Let's search for json-like patterns containing username and id
+                        owner_id_match = re.search(r'"username"\s*:\s*"noryx\.amv"\s*,\s*"id"\s*:\s*"([0-9]+)"', html)
+                        if owner_id_match:
+                            print("Found via username/id match:", owner_id_match.group(1))
+                            
+                        owner_id_match2 = re.search(r'"id"\s*:\s*"([0-9]+)"\s*,\s*"username"\s*:\s*"noryx\.amv"', html)
+                        if owner_id_match2:
+                            print("Found via id/username match:", owner_id_match2.group(1))
+                            
+                        # Look for "owner": {"id": "..."}
+                        owner_match = re.findall(r'"owner"\s*:\s*\{\s*"id"\s*:\s*"([0-9]+)"', html)
+                        print("owner id occurrences:", list(set(owner_match))[:5])
+                        
+                        # Let's dump all occurrences of "id" with a 50 char context around them to see where they are
+                        for match in re.finditer(r'"id"\s*:\s*"([0-9]+)"', html):
+                            start = max(0, match.start() - 30)
+                            end = min(len(html), match.end() + 30)
+                            print("Context:", html[start:end].replace("\n", " "))
+                            
+                except Exception as e:
+                    print("Test failed:", e)
+
+            if __name__ == "__main__":
+                test_parse()
+            EOF
             
-            echo "=== CHECKING SESSION FILE EXISTENCE ==="
-            ls -la config/session_* || true
+            echo "=== RUNNING PARSE DIAGNOSTIC SCRIPT INSIDE CONTAINER ==="
+            docker exec shortsbot-agent python /app/config/test_parse.py || true
+            
+            echo "=== CLEANING UP PARSE DIAGNOSTIC SCRIPT ==="
+            rm -f config/test_parse.py || true
