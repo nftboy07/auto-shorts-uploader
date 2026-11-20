@@ -18,23 +18,45 @@ import database as db
 
 BASE_DIR = Path(__file__).resolve().parent.parent
 
+def _get_allowed_admins() -> List[int]:
+    """Return the configured admin Telegram IDs from settings.yaml and the
+    TELEGRAM_ADMIN_IDS env var (comma-separated). No implicit registration."""
+    settings = load_settings()
+    allowed: List[int] = []
+    for raw in (settings.get("telegram", {}) or {}).get("allowed_admins", []) or []:
+        try:
+            allowed.append(int(raw))
+        except (TypeError, ValueError):
+            app_logger.warning(f"Ignoring non-numeric allowed_admins entry: {raw!r}")
+    for part in os.getenv("TELEGRAM_ADMIN_IDS", "").split(","):
+        part = part.strip()
+        if not part:
+            continue
+        try:
+            allowed.append(int(part))
+        except ValueError:
+            app_logger.warning(f"Ignoring non-numeric TELEGRAM_ADMIN_IDS entry: {part!r}")
+    return allowed
+
 def admin_only(func):
     """Decorator to restrict commands to admin users only."""
     async def wrapper(update: Update, context: ContextTypes.DEFAULT_TYPE, *args, **kwargs):
         user_id = update.effective_user.id
-        settings = load_settings()
-        allowed = settings.get("telegram", {}).get("allowed_admins", [])
-        
-        # Auto-register first user as admin if empty
+        allowed = _get_allowed_admins()
+
+        # No trust-on-first-use: if no admin is provisioned, reject everyone.
         if not allowed:
-            allowed.append(user_id)
-            if "telegram" not in settings:
-                settings["telegram"] = {}
-            settings["telegram"]["allowed_admins"] = allowed
-            save_settings(settings)
-            await update.message.reply_text(f"No admin registered. You have been auto-registered as Admin (ID: {user_id}).")
-            return await func(update, context, *args, **kwargs)
-            
+            app_logger.warning(
+                f"Command rejected: no administrators configured (caller {user_id} "
+                f"@{update.effective_user.username}). Set telegram.allowed_admins in "
+                f"config/settings.yaml or the TELEGRAM_ADMIN_IDS env var."
+            )
+            await update.message.reply_text(
+                "❌ Unauthorized: no administrators are configured. The operator must set "
+                "telegram.allowed_admins in config/settings.yaml (or TELEGRAM_ADMIN_IDS)."
+            )
+            return
+
         if user_id not in allowed:
             app_logger.warning(f"Unauthorized access attempt by user {user_id} (@{update.effective_user.username})")
             await update.message.reply_text("❌ Unauthorized: This command is restricted to administrators.")
@@ -425,6 +447,17 @@ async def update_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
 @admin_only
 async def shell_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Executes a command inside the server shell (strictly restricted)."""
+    # Locked down: arbitrary shell execution is disabled by default. It is a
+    # remote-code-execution primitive and must be explicitly opted into by the
+    # operator (env ENABLE_SHELL_COMMAND=1), in addition to the admin check.
+    if os.getenv("ENABLE_SHELL_COMMAND", "").strip().lower() not in ("1", "true", "yes"):
+        app_logger.warning(f"/shell invoked by {update.effective_user.id} but it is disabled")
+        await update.message.reply_text(
+            "🔒 /shell is disabled. Arbitrary shell execution is turned off for "
+            "security; set ENABLE_SHELL_COMMAND=1 on the server to enable it."
+        )
+        return
+
     if not context.args:
         await update.message.reply_text("Usage: `/shell <command>`")
         return
@@ -694,6 +727,4 @@ async def cookie_document_handler(update: Update, context: ContextTypes.DEFAULT_
     except Exception as e:
         error_logger.error(f"Failed to process uploaded cookies: {e}", exc_info=True)
         await update.message.reply_text(f"❌ Failed to process cookies: {e}")
-
-
 
